@@ -16,8 +16,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { GlassesUI } from '../src/core/glasses-ui.js';
 import { agentCli } from '../src/core/agent-cli.js';
-import { toItem, type GestureEvent, type GlassesAdapter, type ItemLike } from '../src/core/glasses.js';
-import { asText, MARK } from './g2-text.js';
+import {
+  displayWidth,
+  toItem,
+  type GestureEvent,
+  type GlassesAdapter,
+  type ItemLike,
+} from '../src/core/glasses.js';
+import { asText, COLS, MARK } from './g2-text.js';
 
 function stubGlasses() {
   const shown: { header: string; items: string[]; side?: string[] }[] = [];

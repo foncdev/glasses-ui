@@ -71,6 +71,14 @@ const PERMISSION_GUARD_MS = 1200;
 const SCREEN_IDLE_MS = 15_000;
 
 /**
+ * 체크리스트·알림을 다시 읽는 간격.
+ *
+ * 평소에는 SSE가 알려주므로 이 타이머는 거의 할 일이 없다. 안경 웹뷰가
+ * 절전으로 연결을 조용히 끊었을 때를 메우는 용도라 길게 잡는다.
+ */
+const SERVER_POLL_MS = 60_000;
+
+/**
  * 권한 요청에 대한 선택지.
  * 가장 위(커서 기본 위치)에 가장 안전한 선택을 둬서 실수로 승인되지 않게 한다.
  */
@@ -107,6 +115,10 @@ export class GlassesUI {
   private tick = 0;
   private spinTimer?: ReturnType<typeof setInterval>;
   private detailStop?: () => void;
+  /** 체크리스트·알림 변화 구독. 서버가 바뀌면 알려준다. */
+  private eventStop?: () => void;
+  /** 위 구독이 끊겼을 때를 대비한 주기 갱신. */
+  private pollTimer?: ReturnType<typeof setInterval>;
   private watchers = new Map<string, () => void>();
   /** 화면이 꺼져 있는지. 꺼진 동안에는 그리지 않는다. */
   private screenOff = false;
@@ -156,6 +168,15 @@ export class GlassesUI {
    * "연결 중" 같은 안내를 띄울 수 있다. 목록은 접속 후 refresh가 채운다.
    */
   async start(): Promise<void> {
+    // 서버 구독을 먼저 건다. 안경 연결과 상관이 없는 일이다.
+    //
+    // 아래 connect()는 안경이 없으면 던진다. 브라우저로 열었을 때가
+    // 그렇고, 실기기라도 안경이 꺼져 있거나 BLE가 끊겨 있으면 마찬가지다.
+    // 구독을 뒤에 두면 그런 경우에 영영 붙지 못해, 할 일을 바꿔도
+    // 화면이 그대로다.
+    agentCli.onConnectionChange(() => this.watchServerData());
+    this.watchServerData();
+
     await this.glasses.connect();
     // 조작 처리가 던지면 조용한 unhandled rejection으로 사라진다.
     // 화면이 바뀌다 만 채로 멈추므로 여기서 받아 로그로 남긴다.
@@ -191,6 +212,34 @@ export class GlassesUI {
     // 첫 화면은 홈이다. 상단 요약에 쓸 값을 채워야 0으로 보이지 않는다.
     // 알림·체크리스트는 서버가 직접 주므로 맥이 꺼져 있어도 읽힌다.
     await this.refreshSummary();
+  }
+
+  /**
+   * 웹이나 폰에서 할 일·알림을 바꾸면 안경도 따라 바뀌게 한다.
+   *
+   * 예전에는 화면을 옮길 때만 읽어서, 홈을 보고 있으면 바뀐 줄 몰랐다.
+   *
+   * SSE로 받되 주기 갱신을 함께 돌린다. 안경은 웹뷰라 절전으로 연결이
+   * 조용히 끊길 때가 있는데, 그러면 SSE만으로는 영영 모른다.
+   */
+  private watchServerData(): void {
+    this.eventStop?.();
+    this.eventStop = agentCli.streamEvents(() => {
+      // 화면이 꺼져 있으면 그릴 필요가 없다. 깨어날 때 다시 읽는다.
+      if (this.screenOff) return;
+      void this.refreshSummary();
+    });
+
+    clearInterval(this.pollTimer);
+    this.pollTimer = setInterval(() => {
+      if (this.screenOff) return;
+      void this.refreshSummary();
+    }, SERVER_POLL_MS);
+
+    // node에서는 이 타이머 하나 때문에 프로세스가 안 끝난다. 테스트가
+    // 멈춘다. 브라우저의 setInterval은 number라 unref가 없으므로 있을
+    // 때만 부른다.
+    (this.pollTimer as { unref?: () => void }).unref?.();
   }
 
   private async loadSetting(key: string): Promise<string> {
@@ -1211,6 +1260,8 @@ export class GlassesUI {
   async stop(): Promise<void> {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.detailStop?.();
+    this.eventStop?.();
+    clearInterval(this.pollTimer);
     for (const stop of this.watchers.values()) stop();
     this.watchers.clear();
     this.setSpinning(false);

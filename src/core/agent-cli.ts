@@ -72,9 +72,27 @@ export class AgentCliClient {
   private baseUrl = '';
   private apiKey = '';
 
+  /**
+   * 접속 정보가 바뀌면 알린다.
+   *
+   * 스트림은 baseUrl과 토큰을 만들 때 한 번 박는다. 로그인 전에 만든
+   * 것은 빈 주소를 보고 있어 쓸모가 없으므로, 정보가 정해지면 다시
+   * 붙어야 한다.
+   */
+  private onConfigured?: () => void;
+
   configure(conn: Connection): void {
+    const before = `${this.baseUrl}|${this.apiKey}`;
     this.baseUrl = normalizeBaseUrl(conn.baseUrl);
     this.apiKey = conn.apiKey.trim();
+
+    // 같은 값으로 다시 부르는 경우가 있다. 그때까지 스트림을 끊지 않는다.
+    if (`${this.baseUrl}|${this.apiKey}` !== before) this.onConfigured?.();
+  }
+
+  /** 접속 정보가 바뀔 때 부를 함수를 건다. */
+  onConnectionChange(fn: () => void): void {
+    this.onConfigured = fn;
   }
 
   get connection(): Connection {
@@ -367,6 +385,38 @@ export class AgentCliClient {
       return () => es.close();
     } catch {
       onError?.('실시간 연결을 지원하지 않습니다.');
+      return () => undefined;
+    }
+  }
+
+  /**
+   * 서버가 들고 있는 자료(체크리스트·알림)가 바뀌면 알려준다.
+   *
+   * 무엇이 바뀌었는지만 온다. 내용은 받은 쪽이 다시 읽는다. 웹에서 할
+   * 일을 더하면 안경도 곧바로 안다.
+   *
+   * 서버가 이 경로를 모르면(옛 버전) 조용히 아무 일도 하지 않는다.
+   * 그때는 부르는 쪽의 주기 갱신이 대신 메운다.
+   */
+  streamEvents(onChange: (topic: 'checklist' | 'notifications') => void): () => void {
+    const url = `${this.baseUrl}/events${
+      this.apiKey ? `?token=${encodeURIComponent(this.apiKey)}` : ''
+    }`;
+
+    try {
+      const es = new EventSource(url);
+
+      es.addEventListener('changed', (e) => {
+        try {
+          const { topic } = JSON.parse((e as MessageEvent).data) as { topic: string };
+          if (topic === 'checklist' || topic === 'notifications') onChange(topic);
+        } catch {
+          // 하나가 깨져도 스트림은 이어간다.
+        }
+      });
+
+      return () => es.close();
+    } catch {
       return () => undefined;
     }
   }

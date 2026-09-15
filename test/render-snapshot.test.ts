@@ -147,16 +147,16 @@ test('체크리스트의 완료 표시가 그대로다', async () => {
   assert.deepEqual(out.items, ['[x] 끝난 항목', '[ ] 남은 항목', '완료 항목 치우기']);
 });
 
-test('긴 제목은 … 로 잘린다', async () => {
+test('긴 제목은 화면 폭에 맞춰 잘린다', async () => {
   const s = await boot();
   try {
-    // 세션 제목은 38자에서 잘린다. 자르는 주체가 본체에서 어댑터로
-    // 옮겨가도 G2에서 보이는 결과는 같아야 한다.
+    // 한글은 한 글자가 두 칸이다. 글자 수로 세면 목록이 화면 밖으로
+    // 밀리므로 폭으로 잘라야 한다.
     agentCli.listSessions = async () =>
       [{ id: 'x', title: '가'.repeat(60), live: true, status: 'idle' }] as never;
 
     // boot()이 이미 세션을 읽어 왔으므로 다시 읽게 한다.
-    const rr = s.ui as unknown as { sessions: unknown[]; refresh?(): Promise<void> };
+    const rr = s.ui as unknown as { sessions: unknown[] };
     rr.sessions = await agentCli.listSessions();
 
     s.r.screen = 'sessions';
@@ -165,8 +165,34 @@ test('긴 제목은 … 로 잘린다', async () => {
 
     const line = s.shown.at(-1)?.items[0] ?? '';
     assert.ok(line.endsWith('…'), `잘림 표시가 있어야 한다: ${line}`);
-    // '○ ' 두 글자 + 38자
-    assert.equal(line.length, 40, `길이가 유지돼야 한다: ${line.length}`);
+    assert.ok(
+      displayWidth(line) <= COLS,
+      `화면 폭을 넘지 않아야 한다: ${displayWidth(line)}칸`,
+    );
+  } finally {
+    s.restore();
+  }
+});
+
+test('영문 제목은 한글보다 더 많이 들어간다', async () => {
+  const s = await boot();
+  try {
+    // 폭으로 세므로 영문은 칸당 한 글자씩 들어간다. 글자 수로 자르던
+    // 예전에는 영문도 38자에서 끊겨 화면을 절반만 썼다.
+    agentCli.listSessions = async () =>
+      [{ id: 'x', title: 'a'.repeat(100), live: true, status: 'idle' }] as never;
+
+    const rr = s.ui as unknown as { sessions: unknown[] };
+    rr.sessions = await agentCli.listSessions();
+
+    s.r.screen = 'sessions';
+    s.shown.length = 0;
+    await s.r.render();
+
+    const line = s.shown.at(-1)?.items[0] ?? '';
+    assert.ok(displayWidth(line) <= COLS, `폭 상한: ${displayWidth(line)}`);
+    // 한글 33자보다 확실히 많이 들어가야 의미가 있다.
+    assert.ok([...line].length > 50, `영문이 더 들어가야 한다: ${[...line].length}자`);
   } finally {
     s.restore();
   }

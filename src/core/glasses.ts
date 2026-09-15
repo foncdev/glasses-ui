@@ -56,16 +56,6 @@ export interface Item {
   state?: ItemState;
   /** 눈에 띄게 하거나 죽인다. 기기에 따라 굵기·밝기·색으로 나타난다. */
   emphasis?: 'normal' | 'strong' | 'dim';
-  /**
-   * 본문을 자를 글자 수 상한.
-   *
-   * 원래는 기기가 정할 일이지만, 지금은 화면마다 손으로 맞춘 값이
-   * 있어 그대로 넘긴다. 어댑터는 자기 화면이 더 좁으면 이 값을 무시하고
-   * 더 줄여도 된다.
-   *
-   * 픽셀 기반 기기는 이 값을 보지 않아도 된다.
-   */
-  max?: number;
 }
 
 /** 문자열이나 Item 중 아무거나 받는다. 옮겨가는 동안 둘 다 쓴다. */
@@ -152,4 +142,50 @@ export interface GlassesAdapter {
 export function clamp(s: string, max: number): string {
   if (s.length <= max) return s;
   return `${s.slice(0, max - 1)}…`;
+}
+
+/**
+ * 한글·한자·전각 문자는 좁은 폰트에서 두 칸을 먹는다.
+ * 글자 수로만 세면 한글 목록이 화면 밖으로 밀린다.
+ */
+function charWidth(c: string): number {
+  const code = c.codePointAt(0) ?? 0;
+  const wide =
+    (code >= 0x1100 && code <= 0x115f) || // 한글 자모
+    (code >= 0x2e80 && code <= 0xa4cf) || // 한중일 부수·한자
+    (code >= 0xac00 && code <= 0xd7a3) || // 한글 음절
+    (code >= 0xf900 && code <= 0xfaff) || // 한자 호환
+    (code >= 0xfe30 && code <= 0xfe6f) ||
+    (code >= 0xff00 && code <= 0xff60) || // 전각
+    (code >= 0xffe0 && code <= 0xffe6);
+  return wide ? 2 : 1;
+}
+
+/** 화면에서 차지하는 칸 수. */
+export function displayWidth(s: string): number {
+  let n = 0;
+  for (const c of s) n += charWidth(c);
+  return n;
+}
+
+/**
+ * 화면 칸 수에 맞춰 자른다. 잘리면 끝에 …를 붙인다.
+ *
+ * clamp와 달리 글자 수가 아니라 폭을 센다. 격자 화면을 쓰는 기기가
+ * 자기 cols에 맞출 때 쓴다.
+ */
+export function clampWidth(s: string, maxWidth: number): string {
+  if (displayWidth(s) <= maxWidth) return s;
+
+  // …도 한 칸을 먹으므로 자리를 남겨 둔다.
+  const budget = maxWidth - 1;
+  let out = '';
+  let n = 0;
+  for (const c of s) {
+    const w = charWidth(c);
+    if (n + w > budget) break;
+    out += c;
+    n += w;
+  }
+  return `${out}…`;
 }

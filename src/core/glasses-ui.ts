@@ -404,7 +404,6 @@ export class GlassesUI {
         const items: Item[] = this.sessions.map((s) => ({
           text: s.title || '새 대화',
           state: this.statusOf(s),
-          max: 38,
         }));
         if (items.length === 0) items.push({ text: '(연결된 세션이 없습니다)' });
         const busy = this.sessions.filter((s) => s.live && s.status === 'busy').length;
@@ -431,7 +430,6 @@ export class GlassesUI {
         const items: Item[] = this.notifications.map((n) => ({
           text: n.title,
           state: n.readAt ? 'read' : 'unread',
-          max: 36,
         }));
         if (items.length === 0) items.push({ text: '(알림이 없습니다)' });
         else items.push({ text: '모두 읽음 처리' });
@@ -476,7 +474,6 @@ export class GlassesUI {
         const items: Item[] = this.checklist.map((i) => ({
           text: i.text,
           state: i.done ? 'done' : 'todo',
-          max: 34,
         }));
         // 비어 있으면 리스트를 만들 수 없으므로 안내를 항목으로 넣는다.
         if (items.length === 0) items.push({ text: '(폰에서 할 일을 추가하세요)' });

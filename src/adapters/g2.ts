@@ -8,7 +8,8 @@
 
 import { OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
 import {
-  clamp,
+  clampWidth,
+  displayWidth,
   toItem,
   type Caps,
   type Gesture,
@@ -49,16 +50,19 @@ const MARK: Record<ItemState, string> = {
  * 화면을 그대로 두려고 이 차이를 남긴다. todo가 '[ ]'로 오는 줄은
  * 체크리스트가 확실하므로, 그 목록에서만 done을 '[x]'로 바꾼다.
  */
-function marksFor(items: readonly ItemLike[]): string[] {
+function marksFor(items: readonly ItemLike[], cols: number): string[] {
   const parsed = items.map(toItem);
   const isChecklist = parsed.some((i) => i.state === 'todo');
 
   return parsed.map((i) => {
-    // 마크가 없는 줄은 액션 안내다. 원래도 자르지 않았다.
-    if (!i.state) return i.text;
+    // 마크가 없는 줄은 액션 안내다. 폭만 맞춘다.
+    if (!i.state) return clampWidth(i.text, cols);
+
     const mark = isChecklist && i.state === 'done' ? '[x]' : MARK[i.state];
-    // 마크를 뺀 본문만 자른다. 마크까지 세면 제목이 한 글자씩 더 잘린다.
-    return `${mark} ${i.max ? clamp(i.text, i.max) : i.text}`;
+    const prefix = `${mark} `;
+    // 마크가 먹는 칸을 빼고 본문에 남는 만큼만 준다. 한글은 두 칸이라
+    // 글자 수로 세면 목록이 화면 밖으로 밀린다.
+    return prefix + clampWidth(i.text, cols - displayWidth(prefix));
   });
 }
 
@@ -142,8 +146,10 @@ export class G2Adapter implements GlassesAdapter {
     items: readonly ItemLike[],
     side?: readonly ItemLike[],
   ): Promise<void> {
+    // 옆 패널이 뜨면 목록이 그만큼 좁아진다. 로고 자리는 약 절반이다.
+    const cols = side?.length ? Math.floor(this.caps.cols! / 2) : this.caps.cols!;
     // 옆 패널은 로고 같은 장식이라 상태 마크를 붙이지 않는다.
-    await this.display.showList(header, marksFor(items), side?.map((s) => toItem(s).text));
+    await this.display.showList(header, marksFor(items, cols), side?.map((s) => toItem(s).text));
   }
 
   onGesture(handler: (event: GestureEvent) => void): () => void {

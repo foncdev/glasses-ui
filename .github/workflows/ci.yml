@@ -1,0 +1,36 @@
+# 푸시와 PR마다 타입 검사와 테스트를 돌린다.
+#
+# 이 패키지는 빌드 산출물이 없다. 소스째 쓰이므로 타입이 맞는지와
+# 화면 로직이 깨지지 않았는지만 본다.
+#
+# 테스트는 안경 없이 돈다. 어댑터를 스텁으로 갈아끼운다.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 의존성
+        run: npm ci
+
+      - name: 타입 검사
+        run: npm run typecheck
+
+      - name: 테스트
+        # render-snapshot은 G2에 뜨는 글자를 고정해 둔 것이다.
+        # 여기가 깨지면 화면이 바뀐 것이므로 의도한 변경인지 확인해야 한다.
+        run: npm test

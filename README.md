@@ -2,18 +2,18 @@
 
 스마트 안경용 UI 상태머신. 화면 전환, 제스처 매핑, 서버 통신을 담는다.
 
-## glasses-ui와 glasses의 차이
+## glasses-ui와 glasses-g2의 차이
 
 이름이 비슷하지만 역할이 다르다.
 
-| | `glasses-ui/` (여기) | `glasses/` |
+| | `glasses-ui/` (여기) | `glasses-g2/` |
 |---|---|---|
-| 정체 | 라이브러리 | Even Hub 앱 `Relay` |
+| 정체 | 라이브러리 | Even Hub 앱 `Relay` (G2 전용) |
 | 담당 | 화면 상태머신, 제스처→명령, 서버 통신, 어댑터 | 부팅, 서버 주소 탐색, DOM/CSS, 빌드 |
 | 산출물 | 없음. 소스째 쓰인다 | `dist/` → `.ehpk` |
 
-**로직은 전부 여기 있다.** `glasses/`는 이걸 실행 가능한 앱으로 포장하는 껍데기다.
-의존은 `glasses` → `glasses-ui` 한 방향뿐이다.
+**로직은 전부 여기 있다.** `glasses-g2`는 이걸 실행 가능한 앱으로 포장하는
+껍데기다. 의존은 `glasses-g2` → `glasses-ui` 한 방향뿐이다.
 
 `relay-service`와도 헷갈리기 쉬운데 그쪽은 **서버**다. 이 라이브러리가 붙는 상대지
 같은 계층이 아니다. iOS 앱 이름도 `Relay`라 문서에서 "Relay 앱"이라고 하면 폰 앱을
@@ -70,3 +70,13 @@ npm test
 
 안경 없이 돈다. 어댑터를 스텁으로 갈아끼워 화면 전환 그래프와 제스처 매핑을
 검사한다.
+
+## 관련
+
+- [glasses-g2](https://github.com/foncdev/glasses-g2) — G2 호스트 앱
+- [relay-service](https://github.com/foncdev/relay-service) — 중계 서버
+- [claudeAgent](https://github.com/foncdev/claudeAgent) — CLI 제어 매니저
+
+## 라이선스
+
+MIT

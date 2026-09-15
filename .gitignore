@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.DS_Store
+
+# 빌드 산출물이 없는 패키지다. 소스째 쓰인다.
+*.tsbuildinfo

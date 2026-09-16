@@ -49,7 +49,15 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
 export class G2Display {
   private bridge?: Bridge;
   /** 지금 화면이 리스트인지 텍스트인지. 갱신 방법이 달라진다. */
-  private mode: 'text' | 'list' = 'text';
+  /**
+   * 지금 화면에 세워둔 컨테이너 종류.
+   *
+   * 'none'은 컨테이너가 없다는 뜻이다. 앱이 뒤로 물러나면 기기가
+   * 화면을 걷어가므로, 돌아온 뒤에는 갱신(upgrade)이 아니라 처음부터
+   * 다시 세워야(rebuild) 한다. 이 구분이 없으면 갱신이 조용히 실패해
+   * 화면이 영영 안 바뀐다.
+   */
+  private mode: 'text' | 'list' | 'none' = 'text';
   /** 브리지 호출을 직렬화한다. 동시 호출은 연결을 끊을 수 있다. */
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -86,6 +94,20 @@ export class G2Display {
     }
     this.mode = 'text';
     return this.bridge;
+  }
+
+  /**
+   * 뒤로 물러난 사이 사라진 화면을 다시 세운다.
+   *
+   * 실제로 다시 만드는 일은 다음 그리기가 한다. 여기서는 "지금 세워둔
+   * 것이 없다"고만 표시한다. 그러면 showText·showList가 갱신 대신
+   * rebuild 경로를 타 화면을 되찾는다.
+   *
+   * 여기서 직접 rebuild하지 않는 이유는, 무엇을 그릴지는 본체가 알기
+   * 때문이다. 빈 화면을 세워두면 한 번 깜빡인다.
+   */
+  async reattach(): Promise<void> {
+    this.mode = 'none';
   }
 
   /** 브리지 호출을 순서대로 흘려보낸다. */

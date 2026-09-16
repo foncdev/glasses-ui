@@ -124,6 +124,25 @@ export interface GlassesAdapter {
   /** 제스처를 구독한다. 반환값을 호출하면 끊는다. */
   onGesture(handler: (event: GestureEvent) => void): () => void;
 
+  /**
+   * 앱이 앞으로 돌아오거나 뒤로 물러날 때 알려준다.
+   *
+   * 안경은 화면이 꺼지면 앱을 뒤로 물린다. 그 사이 화면 컨테이너가
+   * 사라져, 돌아온 뒤 그리려 하면 조용히 실패한다. 그래서 복귀를
+   * 알아야 화면을 다시 세울 수 있다.
+   *
+   * 이 신호가 없는 기기도 있으므로 선택 사항으로 둔다.
+   */
+  onLifecycle?(handler: (event: 'foreground' | 'background') => void): () => void;
+
+  /**
+   * 화면을 다시 세운다. 복귀 직후 한 번 부른다.
+   *
+   * 기기가 컨테이너를 들고 있는 방식은 어댑터만 안다. 본체는
+   * "다시 세워라"만 말한다.
+   */
+  reattach?(): Promise<void>;
+
   /** 읽어준다. 기기에 스피커가 없으면 폰 등 다른 경로를 쓴다. */
   speak(text: string): void;
 

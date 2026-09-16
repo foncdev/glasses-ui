@@ -79,6 +79,27 @@ const SCREEN_IDLE_MS = 15_000;
 const SERVER_POLL_MS = 60_000;
 
 /**
+ * SSE가 막혔을 때의 갱신 주기.
+ *
+ * G2 웹뷰는 EventSource를 막을 때가 있다. 그때 60초를 기다리면 알림이
+ * 한참 뒤에 뜨거나, 그 사이 화면이 꺼져 아예 못 본다. 이 경우에만
+ * 촘촘히 돈다 — 평소에는 SSE가 즉시 알려주므로 자주 돌 이유가 없다.
+ */
+const SERVER_POLL_FAST_MS = 5_000;
+
+/**
+ * 알림 팝업이 화면에 머무는 시간.
+ *
+ * 알림은 잠깐 알리고 사라져야 한다. 탭할 때까지 남겨두면 두 가지가
+ * 망가진다 — 화면이 그 상태로 굳고, 다음 알림이 "이미 팝업이 떠 있다"는
+ * 이유로 막힌다. 놓쳐도 목록에 남으니 사라져도 잃는 것이 없다.
+ *
+ * 무조작 화면 꺼짐(15초)보다 짧게 둔다. 그래야 팝업이 걷히고 원래
+ * 화면으로 돌아간 뒤에 꺼진다.
+ */
+const NOTICE_MS = 6_000;
+
+/**
  * 권한 요청에 대한 선택지.
  * 가장 위(커서 기본 위치)에 가장 안전한 선택을 둬서 실수로 승인되지 않게 한다.
  */
@@ -110,19 +131,28 @@ export class GlassesUI {
   private permCursor = 0;
   private permShownAt = 0;
   private doneIds = new Set<string>();
-  private notice: { title: string; text: string } | null = null;
+  private notice: { title: string; text: string; heading?: string } | null = null;
   private activity = '';
   private tick = 0;
   private spinTimer?: ReturnType<typeof setInterval>;
   private detailStop?: () => void;
   /** 체크리스트·알림 변화 구독. 서버가 바뀌면 알려준다. */
   private eventStop?: () => void;
+  /** 앞뒤 전환 구독. 끊을 때 쓴다. */
+  private lifecycleStop?: () => void;
   /** 위 구독이 끊겼을 때를 대비한 주기 갱신. */
   private pollTimer?: ReturnType<typeof setInterval>;
   private watchers = new Map<string, () => void>();
   /** 화면이 꺼져 있는지. 꺼진 동안에는 그리지 않는다. */
   private screenOff = false;
   private idleTimer?: ReturnType<typeof setTimeout>;
+  /** 알림 팝업을 스스로 걷는 타이머. */
+  private noticeTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * 팝업이 머무는 시간. 테스트에서 짧게 줄여 실제로 걷히는지 본다.
+   * 기기에서는 기본값을 쓴다.
+   */
+  private noticeMs: number = NOTICE_MS;
   /** 현재 세션의 할 일 목록. */
   private checklist: ChecklistItem[] = [];
   /** 체크리스트 화면에서 커서 위치. */
@@ -140,6 +170,25 @@ export class GlassesUI {
   private notifCursor = 0;
   /** 지금 펼쳐 보고 있는 알림. */
   private openNotif: Notification | null = null;
+  /**
+   * 마지막으로 본 알림의 id.
+   *
+   * 새 알림이 왔는지는 이 값과 목록 맨 앞을 견줘서 안다. 개수만 보면
+   * 하나 오고 하나 읽힌 순간을 놓치고, 지운 뒤에는 줄어들어 새 알림을
+   * 지나간 것으로 오해한다.
+   *
+   * null은 "아직 한 번도 못 읽었다"는 뜻이다. 첫 조회에서 쌓여 있던
+   * 알림이 한꺼번에 뜨지 않게, 그때는 띄우지 않고 기준값만 채운다.
+   *
+   * 목록이 비면 빈 문자열로 둔다. null로 돌리면 다 지운 뒤에 오는
+   * 알림이 "첫 조회"로 취급돼 조용히 묻힌다.
+   */
+  private lastSeenNotifId: string | null = null;
+
+  /** SSE가 막혀 있는지. 막혀 있으면 폴링을 촘촘히 돈다. */
+  private sseDown = false;
+  /** 지금 걸린 폴링 주기. 같은 값으로 다시 걸지 않으려고 둔다. */
+  private pollMs = 0;
 
   /** 한 세션의 대화 기록. sessions → history 단계에서 쓴다. */
   private history: SessionEvent[] = [];
@@ -178,6 +227,21 @@ export class GlassesUI {
     this.watchServerData();
 
     await this.glasses.connect();
+
+    // 앱이 뒤로 물러났다 돌아오면 화면을 다시 세운다.
+    //
+    // 안경은 화면이 꺼지면 앱을 뒤로 물리고 화면 컨테이너를 걷어간다.
+    // 돌아온 뒤 그냥 그리면 조용히 실패해, 그 뒤로는 알림도 조작도
+    // 화면에 나타나지 않는다. 실기기에서만 나던 증상이 이것이었다.
+    this.lifecycleStop = this.glasses.onLifecycle?.((phase) => {
+      if (phase === 'background') {
+        // 물러난 동안은 그리지 않는다. 깨어날 때 다시 세운다.
+        this.screenOff = true;
+        return;
+      }
+      void this.returnToForeground();
+    });
+
     // 조작 처리가 던지면 조용한 unhandled rejection으로 사라진다.
     // 화면이 바뀌다 만 채로 멈추므로 여기서 받아 로그로 남긴다.
     this.glasses.onGesture((e) => {
@@ -224,17 +288,47 @@ export class GlassesUI {
    */
   private watchServerData(): void {
     this.eventStop?.();
-    this.eventStop = agentCli.streamEvents(() => {
-      // 화면이 꺼져 있으면 그릴 필요가 없다. 깨어날 때 다시 읽는다.
-      if (this.screenOff) return;
-      void this.refreshSummary();
-    });
+    this.eventStop = agentCli.streamEvents(
+      () => {
+        // 화면이 꺼져 있어도 읽는다.
+        //
+        // 예전에는 여기서 건너뛰고 깨어날 때 읽었다. 그런데 안경은
+        // 무조작 30초면 꺼지므로 알림은 대부분 꺼진 구간에 들어온다.
+        // 사용자가 안경을 만질 때까지 아무 일도 일어나지 않으니
+        // 알림이라 할 수 없었다. 새 알림은 스스로 화면을 깨워야 한다.
+        //
+        // sleep()은 하드웨어를 끄는 것이 아니라 공백 한 칸을 그린
+        // 것이다. 그래서 showText가 그대로 먹고, 깨우는 데 돈이 들지
+        // 않는다.
+        void this.refreshSummary();
+      },
+      (down) => this.setPolling(down),
+    );
+
+    this.setPolling(this.sseDown);
+  }
+
+  /**
+   * 주기 갱신을 건다. SSE가 죽어 있으면 촘촘히 돈다.
+   *
+   * 같은 주기로 다시 부르면 타이머를 그냥 둔다. SSE가 끊겼다 붙을 때마다
+   * 타이머를 다시 만들면 주기가 계속 밀려 갱신이 드물어진다.
+   */
+  private setPolling(down: boolean): void {
+    const next = down ? SERVER_POLL_FAST_MS : SERVER_POLL_MS;
+    if (this.pollTimer && this.pollMs === next) {
+      this.sseDown = down;
+      return;
+    }
+    this.sseDown = down;
+    this.pollMs = next;
 
     clearInterval(this.pollTimer);
     this.pollTimer = setInterval(() => {
-      if (this.screenOff) return;
+      // SSE와 같은 이유로 꺼져 있어도 읽는다. SSE가 막힌 기기에서는
+      // 이 주기가 알림을 띄우는 유일한 경로다.
       void this.refreshSummary();
-    }, SERVER_POLL_MS);
+    }, next);
 
     // node에서는 이 타이머 하나 때문에 프로세스가 안 끝난다. 테스트가
     // 멈춘다. 브라우저의 setInterval은 number라 unref가 없으므로 있을
@@ -383,6 +477,55 @@ export class GlassesUI {
    * 화면을 깨우고 무조작 타이머를 다시 센다.
    * 사용자 조작이나 알릴 만한 이벤트가 있을 때 부른다.
    */
+  /**
+   * 뒤로 물러났다 돌아왔을 때 화면과 자료를 되찾는다.
+   *
+   * 화면을 다시 세우고, 물러난 사이 바뀐 것을 읽는다. 순서가 중요하다 —
+   * 세우기 전에 그리면 그 그리기가 버려진다.
+   */
+  private async returnToForeground(): Promise<void> {
+    try {
+      await this.glasses.reattach?.();
+    } catch (err) {
+      this.log(`화면 복구 실패: ${(err as Error).message}`, 'warn');
+    }
+
+    // 돌아왔으니 화면을 쓸 수 있다. 무조작 타이머도 다시 센다.
+    this.wake();
+
+    // 물러난 사이 온 알림이 있으면 여기서 뜬다.
+    try {
+      await this.refreshSummary();
+    } catch {
+      // 못 읽어도 화면은 되살아났다. 다음 주기가 다시 읽는다.
+    }
+  }
+
+  /**
+   * 알림 팝업을 띄우고, 시간이 지나면 스스로 걷는다.
+   *
+   * 걷을 때 화면을 다시 그려 원래 보던 곳으로 돌아간다. 그리지 않으면
+   * 팝업 글자가 화면에 그대로 남는다.
+   */
+  private showNotice(notice: { title: string; text: string; heading?: string }): void {
+    this.notice = notice;
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => {
+      // 그 사이 사용자가 탭으로 치웠거나 다른 것이 떴으면 건드리지 않는다.
+      if (this.notice !== notice) return;
+      this.notice = null;
+      void this.render();
+    }, this.noticeMs);
+    (this.noticeTimer as { unref?: () => void }).unref?.();
+  }
+
+  /** 팝업을 지금 걷는다. 타이머도 함께 푼다. */
+  private dismissNotice(): void {
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = undefined;
+    this.notice = null;
+  }
+
   private wake(): void {
     this.screenOff = false;
     if (this.idleTimer) clearTimeout(this.idleTimer);
@@ -395,6 +538,13 @@ export class GlassesUI {
     this.screenOff = true;
     // 작업 중 갱신이 계속 돌면 다시 켜지므로 같이 멈춘다.
     this.setSpinning(false);
+
+    // 팝업을 들고 꺼지지 않는다.
+    //
+    // 남겨두면 두 가지가 망가진다. 깨어났을 때 지나간 알림이 다시
+    // 보이고, 그동안 새 알림이 "이미 떠 있다"는 이유로 막힌다.
+    // 이미 화면에 띄워 알렸고 목록에도 남아 있으니 여기서 걷는다.
+    this.dismissNotice();
     try {
       // 빈 문자열은 기기가 거부할 수 있어 공백 한 칸을 보낸다.
       await this.glasses.showText(' ');
@@ -418,17 +568,19 @@ export class GlassesUI {
         return;
       }
 
-      // 2) 작업 완료 알림.
+      // 2) 작업 완료·새 알림.
       if (this.notice) {
         await this.glasses.showText(
           [
-            '* 작업 완료',
+            `* ${this.notice.heading ?? '작업 완료'}`,
             '',
             clamp(this.notice.title, 46),
             '',
             clamp(this.notice.text, 200),
             '',
-            '탭: 확인',
+            // 잠깐 뒤 스스로 사라진다. 탭은 먼저 치우는 수단일 뿐이라
+            // "확인"이라고 하면 눌러야 하는 것처럼 보인다.
+            '탭: 지금 닫기',
           ].join('\n'),
         );
         return;
@@ -665,13 +817,16 @@ export class GlassesUI {
       // 서버에 남겨 나중에 '알림 보기'에서 다시 볼 수 있게 한다.
       // 화면에 한 번 띄우고 마는 팝업은 놓치면 그만이다.
       try {
-        await agentCli.addNotification({
+        const saved = await agentCli.addNotification({
           title: `${failed ? '오류' : '완료'}: ${s?.title || '새 대화'}`,
           body: result,
           kind: failed ? 'error' : 'done',
           sessionId: id,
         });
         this.unread += 1;
+        // 방금 내가 남긴 알림이다. 아래에서 팝업을 직접 띄우므로
+        // 되돌아온 SSE가 같은 것을 한 번 더 띄우지 않게 눌러둔다.
+        if (saved?.id) this.lastSeenNotifId = saved.id;
       } catch (err) {
         this.log(`알림 저장 실패: ${(err as Error).message}`, 'warn');
       }
@@ -765,12 +920,68 @@ export class GlassesUI {
     await this.refreshSummary();
   }
 
+  /**
+   * 새로 들어온 알림을 안경에 띄운다.
+   *
+   * 웹이나 다른 기기에서 만든 알림은 안경이 만든 것이 아니라서, 여태
+   * 홈 요약의 숫자만 조용히 늘고 화면에는 아무것도 뜨지 않았다.
+   * 알림이 왔다는 걸 알려면 사용자가 홈을 들여다봐야 했다.
+   *
+   * 목록 맨 앞이 지난번과 다르면 새 알림으로 본다. 서버가 최신을
+   * 앞에 놓아주므로 이 비교로 충분하다.
+   */
+  private noticeForNewNotifications(items: Notification[]): void {
+    const newest = items[0];
+    if (!newest) {
+      // 다 지웠다. null이 아닌 빈 값으로 둬야 다음에 오는 알림을
+      // 첫 조회가 아니라 새 알림으로 본다.
+      if (this.lastSeenNotifId !== null) this.lastSeenNotifId = '';
+      return;
+    }
+
+    // 첫 조회다. 쌓여 있던 것을 새 알림으로 쏟아내지 않는다.
+    if (this.lastSeenNotifId === null) {
+      this.lastSeenNotifId = newest.id;
+      return;
+    }
+
+    if (newest.id === this.lastSeenNotifId) return;
+    this.lastSeenNotifId = newest.id;
+
+    // 이미 읽은 알림이 앞에 올 수도 있다(지우기 등으로 순서가 바뀔 때).
+    // 그때는 띄우지 않는다.
+    if (newest.readAt) return;
+
+    // 권한 요청은 덮지 않는다. 사용자가 답해야 작업이 진행되므로,
+    // 알림으로 가리면 승인이 막힌다.
+    if (this.pending) return;
+
+    // 앞선 알림 팝업은 덮는다.
+    //
+    // 예전에는 팝업이 떠 있으면 건너뛰었다. 그런데 팝업은 탭할 때까지
+    // 남아 있어서, 한 번 뜨면 그 뒤의 알림이 전부 막혔다. 첫 알림만
+    // 계속 보이는 증상이 이것이었다. 최신이 더 중요하므로 새로 덮고,
+    // 지나간 것은 알림 목록에 남는다.
+
+    // 알림 화면을 보고 있으면 목록으로 이미 보인다.
+    if (this.screen === 'notifications') return;
+
+    this.wake();
+    this.glasses.speak(newest.title);
+    this.showNotice({
+      title: newest.title,
+      text: newest.body || newest.title,
+      heading: '새 알림',
+    });
+  }
+
   /** 홈 상단 요약에 쓰는 값을 모은다. */
   private async refreshSummary(): Promise<void> {
     try {
       const { items, unread } = await agentCli.listNotifications();
       this.notifications = items;
       this.unread = unread;
+      this.noticeForNewNotifications(items);
     } catch {
       // 알림을 못 읽어도 나머지는 보여준다.
     }
@@ -887,7 +1098,7 @@ export class GlassesUI {
     // 완료 알림은 어떤 탭이든 확인으로 받는다.
     if (this.notice) {
       if (gesture === 'tap' || gesture === 'doubleTap') {
-        this.notice = null;
+        this.dismissNotice();
         await this.render();
       }
       return;
@@ -1261,6 +1472,7 @@ export class GlassesUI {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.detailStop?.();
     this.eventStop?.();
+    this.lifecycleStop?.();
     clearInterval(this.pollTimer);
     for (const stop of this.watchers.values()) stop();
     this.watchers.clear();

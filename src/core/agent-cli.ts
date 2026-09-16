@@ -398,7 +398,10 @@ export class AgentCliClient {
    * 서버가 이 경로를 모르면(옛 버전) 조용히 아무 일도 하지 않는다.
    * 그때는 부르는 쪽의 주기 갱신이 대신 메운다.
    */
-  streamEvents(onChange: (topic: 'checklist' | 'notifications') => void): () => void {
+  streamEvents(
+    onChange: (topic: 'checklist' | 'notifications') => void,
+    onDown?: (down: boolean) => void,
+  ): () => void {
     const url = `${this.baseUrl}/events${
       this.apiKey ? `?token=${encodeURIComponent(this.apiKey)}` : ''
     }`;
@@ -406,7 +409,13 @@ export class AgentCliClient {
     try {
       const es = new EventSource(url);
 
+      // 서버는 붙자마자 hello를 보낸다. 그게 오면 스트림이 산 것이다.
+      // onopen만으로는 부족하다 — G2 웹뷰에서 연결은 열리고 본문이
+      // 오지 않는 경우가 있어, 실제 프레임을 받아야 살았다고 본다.
+      es.addEventListener('hello', () => onDown?.(false));
+
       es.addEventListener('changed', (e) => {
+        onDown?.(false);
         try {
           const { topic } = JSON.parse((e as MessageEvent).data) as { topic: string };
           if (topic === 'checklist' || topic === 'notifications') onChange(topic);
@@ -415,8 +424,15 @@ export class AgentCliClient {
         }
       });
 
+      // 웹뷰가 SSE를 막거나 인증이 틀리면 여기로 온다. 부르는 쪽이
+      // 폴링을 촘촘히 돌려 메우게 알려준다. EventSource는 스스로
+      // 다시 붙으려 하므로 닫지는 않는다.
+      es.onerror = () => onDown?.(true);
+
       return () => es.close();
     } catch {
+      // EventSource 자체가 없는 웹뷰다. 폴링만으로 가야 한다.
+      onDown?.(true);
       return () => undefined;
     }
   }

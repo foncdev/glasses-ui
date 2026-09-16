@@ -107,10 +107,28 @@ export function readGesture(event: EvenHubEvent): GestureEvent | null {
 
   if (sys) {
     const g = toGesture(sys.eventType ?? 0);
-    // 나머지는 생명주기 이벤트다. 여기서는 다루지 않는다.
+    // 나머지는 생명주기 이벤트다. readLifecycle이 따로 읽는다.
     return g ? { gesture: g } : null;
   }
 
+  return null;
+}
+
+/**
+ * 앱이 앞뒤로 오갈 때를 읽는다.
+ *
+ * 안경 화면이 꺼지면 앱이 뒤로 물러나고(5), 깨어나면 돌아온다(4).
+ * 물러난 사이 화면 컨테이너가 사라지므로 돌아온 뒤 다시 세워야 한다.
+ * 이걸 놓치면 그 뒤의 모든 그리기가 조용히 실패한다 — 알림이 안 뜨는
+ * 증상이 여기서 났다.
+ */
+export function readLifecycle(event: EvenHubEvent): 'foreground' | 'background' | null {
+  const sys = event.sysEvent;
+  if (!sys) return null;
+  // 0(탭)이 생략돼 오므로 ?? 0으로 채운다. 그러면 탭이 4·5와 섞이지 않는다.
+  const t = sys.eventType ?? 0;
+  if (t === OsEventTypeList.FOREGROUND_ENTER_EVENT) return 'foreground';
+  if (t === OsEventTypeList.FOREGROUND_EXIT_EVENT) return 'background';
   return null;
 }
 
@@ -161,6 +179,27 @@ export class G2Adapter implements GlassesAdapter {
     // SDK가 해제 함수를 주지 않는 경우를 대비해 빈 함수로 채운다.
     this.unsubscribe = stop ?? ((): void => undefined);
     return this.unsubscribe;
+  }
+
+  /**
+   * 앞으로 돌아오고 뒤로 물러나는 것을 알린다.
+   *
+   * 제스처와 같은 이벤트 흐름으로 오지만 뜻이 전혀 다르다. 제스처로
+   * 섞으면 복귀가 탭으로 오해돼 화면이 멋대로 넘어간다.
+   */
+  onLifecycle(handler: (event: 'foreground' | 'background') => void): () => void {
+    if (!this.bridge) return () => undefined;
+    return (
+      this.bridge.onEvenHubEvent((event: EvenHubEvent) => {
+        const phase = readLifecycle(event);
+        if (phase) handler(phase);
+      }) ?? ((): void => undefined)
+    );
+  }
+
+  /** 뒤로 물러난 사이 사라진 화면을 다시 세운다. */
+  async reattach(): Promise<void> {
+    await this.display.reattach();
   }
 
   // G2에는 스피커가 없다. 소리는 폰에서 난다.

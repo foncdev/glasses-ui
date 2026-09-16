@@ -528,13 +528,35 @@ export class GlassesUI {
 
   private wake(): void {
     this.screenOff = false;
+    this.armIdle();
+  }
+
+  /**
+   * 무조작 타이머를 다시 센다.
+   *
+   * 화면을 켜는 일과 분리해 둔다. 켜지 않고 타이머만 다시 걸어야 하는
+   * 자리가 있기 때문이다 — 이미 꺼진 상태로 sleep()에 다시 들어올 때다.
+   * 거기서 타이머를 놓치면 다시 걸 기회가 없다.
+   */
+  private armIdle(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(() => void this.sleep(), this.idleMs);
+    (this.idleTimer as { unref?: () => void }).unref?.();
   }
 
   /** 화면을 비운다. 상태는 그대로 두고 표시만 끈다. */
   private async sleep(): Promise<void> {
-    if (this.screenOff) return;
+    // 이미 꺼져 있으면 그릴 것은 없다. 그래도 타이머는 다시 무장한다.
+    //
+    // setTimeout은 한 번 터지면 사라지고, 다시 거는 곳은 wake()뿐이었다.
+    // 그래서 이 경로로 빠져나오면 화면이 꺼질 기회를 영구히 잃었다.
+    // 그 뒤 무언가가 화면을 켜면(render를 거치지 않는 직접 그리기 같은
+    // 것) 켜진 채로 남는다. 메인 메뉴에서 화면이 안 꺼지는 증상이
+    // 이것이었다 — 설정을 다시 만지면 wake가 불려 나은 것처럼 보였다.
+    if (this.screenOff) {
+      this.armIdle();
+      return;
+    }
     this.screenOff = true;
     // 작업 중 갱신이 계속 돌면 다시 켜지므로 같이 멈춘다.
     this.setSpinning(false);
@@ -1419,6 +1441,9 @@ export class GlassesUI {
   }
 
   async resume(id: string, deleteOriginal = false): Promise<void> {
+    // render()를 거치지 않고 직접 그린다. 그러면 화면은 켜지는데
+    // 무조작 타이머는 걸리지 않아, 그대로 켜진 채 남는다.
+    this.wake();
     try {
       await this.glasses.showText('대화를 이어가는 중…');
       const { session, deletedOriginal } = await agentCli.resumeSession(id, deleteOriginal);
@@ -1428,6 +1453,7 @@ export class GlassesUI {
     } catch (err) {
       const msg = err instanceof Error ? err.message : '이어가기 실패';
       this.log(msg, 'error');
+      this.wake();
       await this.glasses.showText(`이어가기 실패\n\n${clamp(msg, 200)}`);
     }
   }

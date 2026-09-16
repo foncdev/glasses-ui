@@ -15,6 +15,8 @@ import {
 } from './agent-cli.js';
 import {
   clamp,
+  clampWidth,
+  displayWidth,
   type GestureEvent,
   type GlassesAdapter,
   type Item,
@@ -97,7 +99,95 @@ const SERVER_POLL_FAST_MS = 5_000;
  * 무조작 화면 꺼짐(15초)보다 짧게 둔다. 그래야 팝업이 걷히고 원래
  * 화면으로 돌아간 뒤에 꺼진다.
  */
-const NOTICE_MS = 6_000;
+const NOTICE_MS = 5_000;
+
+/**
+ * 알림 팝업 화면을 글자로 짠다.
+ *
+ * 안경은 576×288 단색에 64칸이다. 색도 굵기도 없어서 구분선과 빈 줄만이
+ * 층을 나누는 수단이다. 그래서 머리말·본문·안내를 줄로 갈라 눈이 먼저
+ * 갈래를 잡고 내용으로 내려가게 한다.
+ *
+ * 순수 함수로 둔다. 화면 없이 글자만 보고 확인할 수 있어야 한다.
+ */
+export function noticeView(
+  notice: { title: string; text: string; label: string },
+  ms: number = NOTICE_MS,
+): string {
+  /*
+   * 선을 긋지 않고 빈 줄로 층을 나눈다.
+   *
+   * 처음에는 구분선을 넣었는데 이 화면에는 맞지 않았다. 전각 '─'는
+   * 한 칸이 아니라 두 칸을 먹어 폭을 넘겨 두 겹으로 접혔고, 반각 '-'로
+   * 바꿔도 단색 화면에서는 글자와 굵기가 같아 어수선하기만 했다.
+   *
+   * 빈 줄은 폭 계산이 필요 없고 어디서도 깨지지 않는다.
+   */
+  const title = notice.title.trim();
+  const body = notice.text.trim();
+
+  /*
+   * 머리말은 갈래 하나로 끝낸다.
+   *
+   * '알림 · 새 알림'처럼 같은 말이 겹쳐 보였다. 팝업이 떴다는 것 자체가
+   * 새 소식이라는 뜻이므로 '새 알림'은 군말이다.
+   */
+  const lines = [notice.label, ''];
+
+  // 제목과 본문 중 있는 것만 넣는다. 둘이 같으면 제목만 남아
+  // 같은 글이 두 줄로 겹치지 않는다.
+  //
+  // 자를 때는 글자 수가 아니라 폭을 센다. 한글은 한 글자가 두 칸이라
+  // 글자 수로 세면 줄이 넘쳐 접힌다.
+  // 머리말과 겹치는 말머리를 뗀다. '* 할 일' 아래 '할 일 추가: …'가
+  // 오면 같은 말이 두 번 보인다.
+  const head = title.replace(/^할 일\s*/, '').replace(/^완료한 할 일\s*/, '');
+  if (head) lines.push(clampWidth(head, NOTICE_COLS));
+  if (body && body !== title && body !== head) {
+    for (const line of wrapToWidth(body, NOTICE_COLS, NOTICE_BODY_ROWS)) {
+      lines.push(line);
+    }
+  }
+
+  lines.push('', `${Math.round(ms / 1000)}초 후 닫힘 · 탭: 닫기`);
+  return lines.join('\n');
+}
+
+/**
+ * 본문을 폭에 맞춰 줄로 나눈다. 넘치는 만큼은 버린다.
+ *
+ * 기기가 알아서 접어주긴 하지만, 그러면 몇 줄이 될지 몰라 팝업이
+ * 화면을 넘길 수 있다. 여기서 줄 수를 정해두면 아래 안내가 늘 보인다.
+ */
+function wrapToWidth(text: string, cols: number, maxRows: number): string[] {
+  const rows: string[] = [];
+  let rest = text.replace(/\s+/g, ' ').trim();
+
+  while (rest && rows.length < maxRows) {
+    if (displayWidth(rest) <= cols) {
+      rows.push(rest);
+      break;
+    }
+    // 폭에 맞는 만큼 끊고, 가능하면 낱말 사이에서 나눈다.
+    const head = clampWidth(rest, cols + 1).replace(/…$/, '');
+    const at = head.lastIndexOf(' ');
+    const cut = at > cols / 2 ? at : head.length;
+    rows.push(rest.slice(0, cut).trimEnd());
+    rest = rest.slice(cut).trimStart();
+  }
+
+  // 더 남았으면 마지막 줄 끝에 …를 붙여 잘렸음을 알린다.
+  if (rest && rows.length === maxRows) {
+    const last = rows[maxRows - 1];
+    rows[maxRows - 1] = clampWidth(`${last}…`, cols);
+  }
+  return rows;
+}
+
+/** 팝업 한 줄에 들어가는 칸 수. 화면 폭(64칸)보다 좁게 둬 여백을 남긴다. */
+const NOTICE_COLS = 40;
+/** 본문에 허용하는 줄 수. 자세한 내용은 알림 목록에서 본다. */
+const NOTICE_BODY_ROWS = 3;
 
 /**
  * 권한 요청에 대한 선택지.
@@ -131,7 +221,14 @@ export class GlassesUI {
   private permCursor = 0;
   private permShownAt = 0;
   private doneIds = new Set<string>();
-  private notice: { title: string; text: string; heading?: string } | null = null;
+  private notice: {
+    /** 한 줄 제목. 없으면 본문만 보여준다. */
+    title: string;
+    /** 자세한 내용. 제목과 같으면 한 번만 그린다. */
+    text: string;
+    /** 머리말에 붙는 갈래. 에이전트·할일·알림을 나눈다. */
+    label: string;
+  } | null = null;
   private activity = '';
   private tick = 0;
   private spinTimer?: ReturnType<typeof setInterval>;
@@ -502,12 +599,35 @@ export class GlassesUI {
   }
 
   /**
+   * 알림이 어디서 왔는지 한 낱말로 고른다.
+   *
+   * 머리말에 붙여 무엇을 알리는지 먼저 보이게 한다. 안경 화면은 좁아
+   * 제목을 다 읽기 전에 갈래부터 알아야 쓸모가 있다.
+   */
+  private labelFor(n: Notification): string {
+    if (n.kind === 'permission') return '* 권한';
+    if (n.kind === 'error') return '* 오류';
+
+    /*
+     * 에이전트 일인지는 세션이 붙어 있는지로 본다.
+     *
+     * kind만 보면 안 된다. 외부 훅도 done을 보낼 수 있어서, 남의
+     * 서비스가 보낸 성공 알림이 에이전트 작업으로 보였다.
+     */
+    if (n.sessionId) return '* 에이전트';
+
+    // 서버가 할 일 변경에 붙이는 제목이다.
+    if (n.title.startsWith('할 일') || n.title.startsWith('완료한 할 일')) return '* 할 일';
+    return '* 알림';
+  }
+
+  /**
    * 알림 팝업을 띄우고, 시간이 지나면 스스로 걷는다.
    *
    * 걷을 때 화면을 다시 그려 원래 보던 곳으로 돌아간다. 그리지 않으면
    * 팝업 글자가 화면에 그대로 남는다.
    */
-  private showNotice(notice: { title: string; text: string; heading?: string }): void {
+  private showNotice(notice: { title: string; text: string; label: string }): void {
     this.notice = notice;
     clearTimeout(this.noticeTimer);
     this.noticeTimer = setTimeout(() => {
@@ -550,8 +670,8 @@ export class GlassesUI {
     //
     // setTimeout은 한 번 터지면 사라지고, 다시 거는 곳은 wake()뿐이었다.
     // 그래서 이 경로로 빠져나오면 화면이 꺼질 기회를 영구히 잃었다.
-    // 그 뒤 무언가가 화면을 켜면(render를 거치지 않는 직접 그리기 같은
-    // 것) 켜진 채로 남는다. 메인 메뉴에서 화면이 안 꺼지는 증상이
+    // 그 뒤 무언가가 화면을 켜면(아래 render를 거치지 않는 직접 그리기
+    // 같은 것) 켜진 채로 남는다. 메인 메뉴에서 화면이 안 꺼지는 증상이
     // 이것이었다 — 설정을 다시 만지면 wake가 불려 나은 것처럼 보였다.
     if (this.screenOff) {
       this.armIdle();
@@ -592,19 +712,7 @@ export class GlassesUI {
 
       // 2) 작업 완료·새 알림.
       if (this.notice) {
-        await this.glasses.showText(
-          [
-            `* ${this.notice.heading ?? '작업 완료'}`,
-            '',
-            clamp(this.notice.title, 46),
-            '',
-            clamp(this.notice.text, 200),
-            '',
-            // 잠깐 뒤 스스로 사라진다. 탭은 먼저 치우는 수단일 뿐이라
-            // "확인"이라고 하면 눌러야 하는 것처럼 보인다.
-            '탭: 지금 닫기',
-          ].join('\n'),
-        );
+        await this.glasses.showText(noticeView(this.notice, this.noticeMs));
         return;
       }
 
@@ -854,8 +962,15 @@ export class GlassesUI {
       }
 
       // 목록·홈에 있을 때만 팝업을 띄운다. 대화 화면에서는 이미 보고 있다.
+      //
+      // showNotice로 띄운다. 직접 넣으면 스스로 걷는 타이머가 걸리지
+      // 않아 탭할 때까지 화면이 굳는다.
       if (this.screen === 'home' || this.screen === 'sessions') {
-        this.notice = { title: s?.title || '새 대화', text: failed ? `오류: ${result}` : result };
+        this.showNotice({
+          title: s?.title || '새 대화',
+          text: failed ? `오류: ${result}` : result,
+          label: '에이전트',
+        });
       }
       await this.render();
       return;
@@ -992,8 +1107,10 @@ export class GlassesUI {
     this.glasses.speak(newest.title);
     this.showNotice({
       title: newest.title,
-      text: newest.body || newest.title,
-      heading: '새 알림',
+      // 본문이 없으면 비워 둔다. 제목을 넣으면 같은 글이 두 줄로 겹친다 —
+      // 웹에서 제목만 적어 보낼 때가 그렇다.
+      text: newest.body.trim() === newest.title.trim() ? '' : newest.body,
+      label: this.labelFor(newest),
     });
   }
 

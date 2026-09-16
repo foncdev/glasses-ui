@@ -82,7 +82,7 @@ async function setup(initial: Notif[]) {
   const r = relay as unknown as {
     screen: string;
     screenOff: boolean;
-    notice: { title: string; text: string; heading?: string } | null;
+    notice: { title: string; text: string; label: string } | null;
     refreshSummary(): Promise<void>;
     render(): Promise<void>;
   };
@@ -126,7 +126,7 @@ test('새 알림이 오면 화면에 띄우고 읽어준다', async () => {
 
     assert.ok(r.notice, '새 알림인데 팝업이 없다');
     assert.equal(r.notice?.title, '배포 완료');
-    assert.equal(r.notice?.heading, '새 알림', "'작업 완료'로 뜨면 완료 알림과 구별되지 않는다");
+    assert.equal(r.notice?.label, '* 알림', '웹에서 넣은 알림은 알림 갈래여야 한다');
     assert.ok(
       texts.some((t) => t.includes('배포 완료')),
       '안경 화면에 제목이 나와야 한다',

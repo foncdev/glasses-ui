@@ -8,8 +8,11 @@
 
 import {
   clamp,
+  type HistoryView,
   type HomeView,
+  type LiveView,
   type NoticeView,
+  type PermissionView,
   type NotificationView,
   type NotificationsView,
   type SessionsView,
@@ -18,6 +21,7 @@ import { fitBytes } from './g2-bytes.js';
 import { layoutHome, type Box } from './g2-home.js';
 import { layoutNotice, layoutNotification, layoutNotifications } from './g2-inbox.js';
 import { layoutSessions } from './g2-sessions.js';
+import { layoutHistory, layoutLive, layoutPermission } from './g2-talk.js';
 import {
   CreateStartUpPageContainer,
   ListContainerProperty,
@@ -49,7 +53,15 @@ const FOOTER_NAME = 'footer';
 const BODY_ID = 7;
 const BODY_NAME = 'body';
 
-type RichKind = 'home' | 'sessions' | 'notifications' | 'notification' | 'notice';
+type RichKind =
+  | 'home'
+  | 'sessions'
+  | 'notifications'
+  | 'notification'
+  | 'notice'
+  | 'history'
+  | 'live'
+  | 'permission';
 
 /** 꾸민 화면의 글자 칸 하나. live면 자리가 그대로일 때 글자만 고친다. */
 interface RichText {
@@ -409,6 +421,53 @@ export class G2Display {
     ]);
   }
 
+  /** 꾸민 대화 목록. */
+  async showHistory(view: HistoryView): Promise<void> {
+    const l = layoutHistory(view);
+    await this.showRich(
+      'history',
+      [
+        { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+        { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+        { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+        { id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text, live: true },
+        { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
+      ],
+      { box: l.list, items: l.list.items },
+    );
+  }
+
+  /**
+   * 꾸민 진행 중 대화. 기록과 진행 카드는 글자만 고친다. 도는 기호가 돌
+   * 때마다 그리므로 다시 세우면 깜빡임이 심하다. 기록 칸이 조작을 받는다.
+   */
+  async showLive(view: LiveView): Promise<void> {
+    const l = layoutLive(view);
+    await this.showRich('live', [
+      { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+      { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+      { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+      { id: BODY_ID, name: BODY_NAME, box: l.log, text: l.log.text, live: true, capture: true },
+      { id: SIDE_ID, name: SIDE_NAME, box: l.activity, text: l.activity.text, live: true },
+      { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
+    ]);
+  }
+
+  /** 꾸민 권한 요청. 선택지 목록이 조작을 받는다. */
+  async showPermission(view: PermissionView): Promise<void> {
+    const l = layoutPermission(view);
+    await this.showRich(
+      'permission',
+      [
+        { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+        { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+        { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+        { id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text },
+      ],
+      { box: l.list, items: l.list.items },
+    );
+  }
+
   /**
    * 여러 칸으로 꾸민 화면을 그린다.
    *
@@ -428,7 +487,8 @@ export class G2Display {
     const key = JSON.stringify([
       kind,
       list?.items ?? null,
-      texts.map((t) => [t.id, t.box.x, t.box.y, t.box.w, t.box.h, t.live ? null : t.text]),
+      // 테두리가 바뀌면(진행 카드의 작업 중·쉼) 글자만 고쳐서는 안 된다.
+      texts.map((t) => [t.id, t.box.x, t.box.y, t.box.w, t.box.h, t.box.border ?? null, t.live ? null : t.text]),
     ]);
     const live = texts.filter((t) => t.live);
 

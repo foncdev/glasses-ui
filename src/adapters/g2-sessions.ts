@@ -15,7 +15,7 @@
  * 상태별 개수는 글자 칸(바이트 한도 없음)인 오른쪽 카드에 둔다.
  */
 import type { ItemState, SessionsView } from '../core/glasses.js';
-import { type Box, SCREEN_W, alignRight, center, spread, spreadItem } from './g2-home.js';
+import { type Box, SCREEN_W, alignRight, center, listHeight, spread, spreadItem } from './g2-home.js';
 
 /**
  * 상태 기호. 이 폰트에 있는 것만 쓴다(✓·◉·▸는 없다).
@@ -97,7 +97,7 @@ export function layoutSessions(view: SessionsView): SessionsLayout {
     ...base,
     list: {
       // 5칸(200px) + 여백. 아래 안내 줄 자리를 남긴다.
-      x: 0, y: 38, w: listW, h: 5 * 40 + 2 * listPad, padding: listPad,
+      x: 0, y: 38, w: listW, h: listHeight(view.rows.length, 5, listPad), padding: listPad,
       items: view.rows.map((r) => spreadItem(`${SESSION_GLYPH[r.state]}  ${r.title}`, r.meta, rowW)),
     },
     card: {

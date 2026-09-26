@@ -24,7 +24,11 @@ import {
   type GlassesAdapter,
   type Item,
   type ItemState,
+  type HistoryView,
   type HomeView,
+  type LineKind,
+  type LiveView,
+  type PermissionView,
   type NoticeKind,
   type NotificationView,
   type NotificationsView,
@@ -65,6 +69,24 @@ function clock(now = new Date()): string {
  * 마지막 활동이 얼마나 지났는지. 안경 한 줄에 들어가게 짧게 쓴다.
  * 방금 · 12분 · 3시간 · 어제 · 4일
  */
+/**
+ * 도구 입력에서 한 줄로 보여줄 대상을 고른다. 명령·파일·검색어 순.
+ * 모르는 도구면 비워 둔다.
+ */
+export function toolBrief(input: unknown): string {
+  if (!input || typeof input !== 'object') return '';
+  const o = input as Record<string, unknown>;
+  for (const k of ['command', 'file_path', 'notebook_path', 'pattern', 'url', 'query', 'path', 'description']) {
+    const v = o[k];
+    if (typeof v === 'string' && v.trim()) {
+      const line = v.split('\n')[0]!.trim();
+      // 경로는 끝 두 칸이면 알아본다. 앞부분은 대개 홈 폴더다.
+      return k.endsWith('path') ? line.split('/').slice(-2).join('/') : line;
+    }
+  }
+  return '';
+}
+
 export function timeAgo(iso: string | undefined, now = Date.now()): string {
   const t = iso ? Date.parse(iso) : NaN;
   if (Number.isNaN(t)) return '';
@@ -356,6 +378,14 @@ export class GlassesUI {
   private cursor = 0;
   private activeId = '';
   private lines: string[] = [];
+  /**
+   * lines와 같은 것을 누가 했는지와 함께 담는다. 꾸민 대화 화면(showLive)이
+   * 기호를 고르는 데 쓴다. lines는 글 화면과 기존 테스트가 쓰므로 그대로 둔다.
+   */
+  private feed: Array<{ kind: LineKind; text: string }> = [];
+  /** 지금 하는 일의 대상(명령·파일)과 시작 시각. 진행 카드에 쓴다. */
+  private activityDetail = '';
+  private activityAt = 0;
   private status = '';
   private pending: { id: string; toolName: string; summary: string } | null = null;
   private permCursor = 0;
@@ -830,6 +860,76 @@ export class GlassesUI {
     };
   }
 
+  /** 세션 상태를 사람 말로. 상태 표시줄과 카드에 쓴다. */
+  private sessionStateLabel(s: SessionInfo | undefined): string {
+    if (s && !s.live) return '종료됨';
+    if (this.pending) return '승인 대기';
+    return this.statusText(this.status || s?.status || 'idle');
+  }
+
+  /** 대화 목록에 그릴 것. 오른쪽 카드는 세션 정보라 고른 줄과 상관없다. */
+  private historyView(s: SessionInfo | undefined): HistoryView {
+    const ago = s?.lastActivityAt ? timeAgo(s.lastActivityAt) : '';
+    return {
+      title: `$ ~/${s?.title || '새 대화'}`,
+      status: clock(),
+      rows: this.historyItems().map((h) => ({
+        kind: h.kind,
+        text: h.full.replace(/\n/g, ' ').trim() || '(내용 없음)',
+      })),
+      action: '대화 이어서 보기',
+      info: {
+        state: s ? this.statusOf(s) : 'idle',
+        label: this.sessionStateLabel(s),
+        rows: [
+          { label: '턴', value: String(s?.turns ?? 0) },
+          { label: '비용', value: `$${(s?.totalCostUsd ?? 0).toFixed(2)}` },
+          { label: '폴더', value: s?.cwd ? (s.cwd.split(/[\\/]/).filter(Boolean).pop() ?? '') : '' },
+          { label: '활동', value: ago ? (ago === '방금' ? ago : `${ago} 전`) : '' },
+        ],
+      },
+      hint: '● 전문 보기    ●● 뒤로',
+    };
+  }
+
+  /** 진행 중 대화에 그릴 것. 하는 일이 바뀌거나 도는 기호가 돌 때 글자만 고친다. */
+  private liveView(s: SessionInfo | undefined): LiveView {
+    const closed = Boolean(s && !s.live);
+    const busy = !closed && this.status === 'busy';
+    const secs = this.activityAt ? Math.max(0, Math.floor((Date.now() - this.activityAt) / 1000)) : 0;
+    return {
+      title: `$ ~/${s?.title || '새 대화'}`,
+      status: [this.sessionStateLabel(s), clock()].join('   '),
+      lines: this.feed.slice(-6),
+      activity: busy
+        ? {
+            text: [this.activity || '작업 중', this.activityDetail].filter(Boolean).join('  '),
+            elapsed: this.activityAt ? (secs < 60 ? `${secs}초` : `${Math.floor(secs / 60)}분`) : '',
+            tick: this.tick,
+          }
+        : undefined,
+      idle: closed ? '종료됨  ·  탭하면 이어가기' : `${this.sessionStateLabel(s)}  ·  탭하면 할 일`,
+      hint: closed ? '● 이어가기    ●● 뒤로' : '● 할 일    ●● 뒤로',
+      meta: s ? `턴 ${s.turns}  ·  $${s.totalCostUsd.toFixed(2)}` : '',
+    };
+  }
+
+  /** 권한 요청에 그릴 것. 선택지 순서는 PERMISSION_CHOICES와 같다(거부가 맨 앞). */
+  private permissionView(p: { toolName: string; summary: string }): PermissionView {
+    const s = this.sessions.find((x) => x.id === this.activeId);
+    return {
+      title: `$ ~/${s?.title || '새 대화'}`,
+      status: ['◆ 권한 요청', clock()].join('   '),
+      tool: p.toolName,
+      summary: p.summary.replace(/\n/g, ' ').trim(),
+      choices: PERMISSION_CHOICES.map((c) => ({
+        kind: c.behavior === 'deny' ? 'deny' : c.always ? 'always' : 'once',
+        label: c.label,
+      })),
+      hint: '더블탭 = 거부',
+    };
+  }
+
   private summary(): string {
     const busy = this.sessions.filter((s) => s.live && s.status === 'busy').length;
     const done = this.checklist.filter((i) => i.done).length;
@@ -847,8 +947,8 @@ export class GlassesUI {
    * 목록이 길어져 정작 주고받은 말을 찾기 어려우므로 여기서는 빼고,
    * 고르면 그 전문을 보여준다.
    */
-  private historyItems(): { line: string; full: string }[] {
-    const out: { line: string; full: string }[] = [];
+  private historyItems(): { line: string; full: string; kind: 'me' | 'ai' }[] {
+    const out: { line: string; full: string; kind: 'me' | 'ai' }[] = [];
     for (const e of this.history) {
       if (e.type !== 'user' && e.type !== 'assistant') continue;
       const full = String(e.text ?? '');
@@ -856,6 +956,7 @@ export class GlassesUI {
       out.push({
         line: `${who}> ${clamp(full.replace(/\n/g, ' ').trim() || '(내용 없음)', 34)}`,
         full,
+        kind: e.type === 'user' ? 'me' : 'ai',
       });
     }
     return out;
@@ -1002,6 +1103,10 @@ export class GlassesUI {
       if (this.pending) {
         const p = this.pending;
         this.permShownAt = Date.now();
+        if (this.glasses.showPermission) {
+          await this.glasses.showPermission(this.permissionView(p));
+          return;
+        }
         await this.glasses.showList(`권한: ${clamp(p.toolName, 30)}`, [
           ...PERMISSION_CHOICES.map((c) => c.label),
           ...(p.summary ? [`  ${clamp(p.summary.replace(/\n/g, ' '), 60)}`] : []),
@@ -1067,6 +1172,10 @@ export class GlassesUI {
       // 5) 한 세션의 대화 기록.
       if (this.screen === 'history') {
         const s = this.sessions.find((x) => x.id === this.activeId);
+        if (this.glasses.showHistory) {
+          await this.glasses.showHistory(this.historyView(s));
+          return;
+        }
         const items = this.historyItems().map((h) => h.line);
         // 리스트는 비어 있으면 만들 수 없다.
         if (items.length === 0) items.push('(주고받은 기록이 없습니다)');
@@ -1179,6 +1288,10 @@ export class GlassesUI {
 
       // 5) 상세 화면.
       const s = this.sessions.find((x) => x.id === this.activeId);
+      if (this.glasses.showLive) {
+        await this.glasses.showLive(this.liveView(s));
+        return;
+      }
       const head = s ? clamp(s.title || '새 대화', 46) : '세션';
 
       let status: string;
@@ -1201,6 +1314,27 @@ export class GlassesUI {
   }
 
   // --- 이벤트 ---
+
+  /** 이벤트 한 건을 누가 했는지와 함께 한 줄로. 꾸민 대화 화면용이다. */
+  private toFeed(e: SessionEvent): { kind: LineKind; text: string } | null {
+    const first = (k: string): string => String(e[k] ?? '').split('\n')[0]?.trim() ?? '';
+    switch (e.type) {
+      case 'user':
+        return { kind: 'me', text: first('text') };
+      case 'assistant':
+        return first('text') ? { kind: 'ai', text: first('text') } : null;
+      case 'tool_use': {
+        const brief = toolBrief(e.input);
+        return { kind: 'tool', text: brief ? `${String(e.name ?? '')}  ${brief}` : String(e.name ?? '') };
+      }
+      case 'stderr':
+        return { kind: 'error', text: first('text') };
+      case 'resumed':
+        return { kind: 'info', text: '여기부터 이어서' };
+      default:
+        return null;
+    }
+  }
 
   /** 이벤트 한 건을 화면에 보여줄 짧은 줄로 바꾼다. */
   private toLine(e: SessionEvent): string | null {
@@ -1232,7 +1366,13 @@ export class GlassesUI {
     } else if (!on && this.spinTimer) {
       clearInterval(this.spinTimer);
       this.spinTimer = undefined;
-      this.activity = '';
+      // 승인 대기로 잠깐 멈출 때는 하던 일을 남긴다. 승인하면 같은 일을
+      // 이어서 하는데, 지우면 진행 카드에 '작업 중'만 남았다.
+      if (this.status !== 'waiting') {
+        this.activity = '';
+        this.activityDetail = '';
+        this.activityAt = 0;
+      }
     }
   }
 
@@ -1245,8 +1385,16 @@ export class GlassesUI {
       return;
     }
 
-    if (e.type === 'tool_use') this.activity = String(e.name ?? '');
-    if (e.type === 'thinking') this.activity = '생각 중';
+    if (e.type === 'tool_use') {
+      this.activity = String(e.name ?? '');
+      this.activityDetail = toolBrief(e.input);
+      this.activityAt = Date.now();
+    }
+    if (e.type === 'thinking') {
+      this.activity = '생각 중';
+      this.activityDetail = '';
+      this.activityAt = Date.now();
+    }
 
     if (e.type === 'permission_request') {
       this.pending = {
@@ -1285,6 +1433,11 @@ export class GlassesUI {
     }
 
     const line = this.toLine(e);
+    const fed = this.toFeed(e);
+    if (fed) {
+      this.feed.push(fed);
+      if (this.feed.length > 40) this.feed.shift();
+    }
     if (line) {
       this.lines.push(line);
       if (this.lines.length > 40) this.lines.shift();
@@ -2045,6 +2198,7 @@ export class GlassesUI {
     this.activeId = id;
     this.screen = 'detail';
     this.lines = [];
+    this.feed = [];
     this.pending = null;
     this.status = '';
     this.doneIds.delete(id);
@@ -2055,6 +2209,8 @@ export class GlassesUI {
       for (const e of await agentCli.getHistory(id, 40)) {
         const line = this.toLine(e);
         if (line) this.lines.push(line);
+        const fed = this.toFeed(e);
+        if (fed) this.feed.push(fed);
       }
     } catch (err) {
       this.log(`이력 불러오기 실패: ${(err as Error).message}`, 'error');

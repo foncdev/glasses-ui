@@ -12,7 +12,7 @@ import type {
   NotificationView,
   NotificationsView,
 } from '../core/glasses.js';
-import { type Box, SCREEN_W, alignRight, center, spread, spreadItem } from './g2-home.js';
+import { type Box, SCREEN_W, alignRight, center, listHeight, spread, spreadItem } from './g2-home.js';
 
 export const NOTICE_SHAPE: Record<NoticeKind, readonly [unread: string, read: string]> = {
   done: ['●', '○'],
@@ -66,15 +66,15 @@ export function wrapText(text: string, width: number, rows: number): string[] {
   return cut;
 }
 
-type TextBox = Box & { text: string };
+export type TextBox = Box & { text: string };
 
-interface StatusParts {
+export interface StatusParts {
   statusLeft: TextBox;
   statusRight: TextBox;
   divider: Box;
 }
 
-function statusParts(title: string, status: string): StatusParts {
+export function statusParts(title: string, status: string): StatusParts {
   const rightW = 246;
   return {
     statusLeft: { x: 0, y: 0, w: SCREEN_W - rightW, h: 32, padding: 2, brightness: 4, text: title },
@@ -86,7 +86,7 @@ function statusParts(title: string, status: string): StatusParts {
   };
 }
 
-function footer(left: string, right: string): TextBox {
+export function footer(left: string, right: string): TextBox {
   return {
     x: 0, y: 256, w: SCREEN_W, h: 32, padding: 2, brightness: 1,
     text: spread(left, right, SCREEN_W - 4 - 12),
@@ -143,7 +143,7 @@ export function layoutNotifications(view: NotificationsView): NotificationsLayou
     ...base,
     footer: footer(view.hint, view.legend),
     list: {
-      x: 0, y: 38, w: listW, h: 5 * 40 + 2 * listPad, padding: listPad,
+      x: 0, y: 38, w: listW, h: listHeight(view.rows.length + (view.action ? 1 : 0), 5, listPad), padding: listPad,
       items: [
         ...view.rows.map((r) =>
           spreadItem(`${NOTICE_SHAPE[r.kind][r.read ? 1 : 0]}  ${r.title}`, r.meta, rowW),

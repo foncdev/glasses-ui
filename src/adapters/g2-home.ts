@@ -38,7 +38,9 @@ function fill(gap: number): string {
 /** 이 폭(px)에 맞춰 왼쪽 글과 오른쪽 글 사이를 공백으로 채운다. */
 export function spread(left: string, right: string, width: number): string {
   if (!right) return pxTruncate(left, width);
-  const r = pxTruncate(right, Math.floor(width / 2.5));
+  // 오른쪽 값은 왼쪽 글이 쓰고 남은 만큼 쓴다. 폭의 일부로 못 박으면 짧은
+  // 라벨 옆의 긴 값(폴더 이름)이 쓸데없이 잘렸다.
+  const r = pxTruncate(right, Math.max(Math.floor(width / 2.5), width - getTextWidth(left) - 3 * SPACE));
   const l = pxTruncate(left, width - getTextWidth(r) - SPACE);
   // 이어 붙이면 사이 커닝으로 1~2px이 더 나온다. 딱 맞추면 접히므로 여유를 둔다.
   return l + fill(width - getTextWidth(l) - getTextWidth(r) - 3) + r;
@@ -92,6 +94,16 @@ export interface HomeLayout {
   list: Box & { items: string[] };
   card?: Box & { text: string };
   stats?: Box & { text: string };
+}
+
+/**
+ * 목록 높이. 보이는 줄 수만큼만 잡는다.
+ *
+ * 항목이 높이보다 적으면 펌웨어가 목록을 세로 가운데로 내려 그린다.
+ * 3줄짜리 대화 목록이 한 줄 아래에서 시작해 맨 위가 비어 보였다.
+ */
+export function listHeight(items: number, maxRows: number, padding: number): number {
+  return Math.max(1, Math.min(items, maxRows)) * 40 + 2 * padding;
 }
 
 /** 목록 칸의 좌우 여백. 펌웨어가 칸마다 12px씩 둔다. */

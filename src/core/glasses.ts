@@ -147,6 +147,49 @@ export interface NoticeView {
   closeHint: string;
 }
 
+/** 대화에 오간 것 한 줄. 누가(나·AI·도구) 했는지로 기호를 고른다. */
+export type LineKind = 'me' | 'ai' | 'tool' | 'error' | 'info';
+
+/** 대화 목록(showHistory). 주고받은 말을 훑고 맨 아래에서 대화로 들어간다. */
+export interface HistoryView {
+  title: string;
+  status: string;
+  /** 주고받은 말. 나와 AI만. */
+  rows: ReadonlyArray<{ kind: 'me' | 'ai'; text: string }>;
+  /** 목록 끝에 붙는 동작 줄(대화 이어서 보기). */
+  action: string;
+  /** 세션 정보. 고른 줄과 상관없이 보여줄 수 있는 것. */
+  info: { state: ItemState; label: string; rows: ReadonlyArray<{ label: string; value: string }> };
+  hint: string;
+}
+
+/** 진행 중 대화(showLive). */
+export interface LiveView {
+  title: string;
+  status: string;
+  /** 최근에 오간 것. 오래된 것부터. */
+  lines: ReadonlyArray<{ kind: LineKind; text: string }>;
+  /** 지금 하는 일. 쉬고 있으면 없다. tick은 도는 기호를 고르는 데 쓴다. */
+  activity?: { text: string; elapsed: string; tick: number };
+  /** 쉴 때 보여줄 말. 대기·종료됨과 탭으로 할 수 있는 일. */
+  idle: string;
+  hint: string;
+  /** 안내 줄 오른쪽. 턴 수와 비용. */
+  meta: string;
+}
+
+/** 권한 요청(showPermission). 거부가 맨 앞이다. */
+export interface PermissionView {
+  title: string;
+  status: string;
+  tool: string;
+  /** 무엇을 하려는지. 명령·파일 경로 등. */
+  summary: string;
+  choices: ReadonlyArray<{ kind: 'deny' | 'once' | 'always'; label: string }>;
+  /** 카드 오른쪽 안내. 더블탭이 거부라는 것. */
+  hint: string;
+}
+
 /** 세션 화면에 그릴 것. 어떻게 그릴지는 어댑터가 정한다(showSessions). */
 export interface SessionsView {
   /** 상태 표시줄 왼쪽. */
@@ -217,6 +260,11 @@ export interface GlassesAdapter {
   showNotifications?(view: NotificationsView): Promise<void>;
   showNotification?(view: NotificationView): Promise<void>;
   showNotice?(view: NoticeView): Promise<void>;
+
+  /** 대화 목록·진행 중 대화·권한 요청을 꾸며 그린다. 없으면 본체가 목록·글로 그린다. */
+  showHistory?(view: HistoryView): Promise<void>;
+  showLive?(view: LiveView): Promise<void>;
+  showPermission?(view: PermissionView): Promise<void>;
 
   /** 제스처를 구독한다. 반환값을 호출하면 끊는다. */
   onGesture(handler: (event: GestureEvent) => void): () => void;

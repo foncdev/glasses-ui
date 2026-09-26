@@ -17,7 +17,10 @@ import {
   type GlassesAdapter,
   type ItemLike,
   type ItemState,
+  type HistoryView,
   type HomeView,
+  type LiveView,
+  type PermissionView,
   type NoticeView,
   type NotificationView,
   type NotificationsView,
@@ -193,6 +196,18 @@ export class G2Adapter implements GlassesAdapter {
 
   async showNotice(view: NoticeView): Promise<void> {
     await this.display.showNotice(view);
+  }
+
+  async showHistory(view: HistoryView): Promise<void> {
+    await this.display.showHistory(view);
+  }
+
+  async showLive(view: LiveView): Promise<void> {
+    await this.display.showLive(view);
+  }
+
+  async showPermission(view: PermissionView): Promise<void> {
+    await this.display.showPermission(view);
   }
 
   onGesture(handler: (event: GestureEvent) => void): () => void {

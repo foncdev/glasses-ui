@@ -131,10 +131,22 @@ export class AgentCliClient {
    */
   private onConfigured?: () => void;
 
+  /**
+   * 401을 받았는지. 받았으면 접속 정보가 바뀔 때까지 주기 갱신을 멈춘다.
+   *
+   * 폰이 로그인 화면에 머무는 동안에도 안경은 5초마다 알림·할 일·세션을
+   * 읽었다. 토큰이 없으니 전부 401이라, relay 로그에 '인증 실패'가 끝없이
+   * 쌓였다.
+   */
+  private unauthorized = false;
+  private unauthorizedListeners: Array<() => void> = [];
+
   configure(conn: Connection): void {
     const before = `${this.baseUrl}|${this.apiKey}`;
     this.baseUrl = normalizeBaseUrl(conn.baseUrl);
     this.apiKey = conn.apiKey.trim();
+    // 접속 정보가 바뀌었다(로그인·서버 변경). 다시 두드려 본다.
+    if (`${this.baseUrl}|${this.apiKey}` !== before) this.unauthorized = false;
 
     // 같은 값으로 다시 부르는 경우가 있다. 그때까지 스트림을 끊지 않는다.
     if (`${this.baseUrl}|${this.apiKey}` !== before) this.onConfigured?.();
@@ -151,6 +163,22 @@ export class AgentCliClient {
 
   get isConfigured(): boolean {
     return this.baseUrl.length > 0;
+  }
+
+  /** 주기 갱신을 해도 되는지. 401을 받은 뒤로는 접속 정보가 바뀔 때까지 아니다. */
+  get canPoll(): boolean {
+    return !this.unauthorized;
+  }
+
+  /**
+   * 로그인이 풀렸을 때(401) 부를 함수를 건다. 한 번 풀릴 때 한 번 부른다.
+   * 로그인·초기 설정 요청의 401(비밀번호 틀림)은 세지 않는다.
+   */
+  onUnauthorized(fn: () => void): () => void {
+    this.unauthorizedListeners.push(fn);
+    return () => {
+      this.unauthorizedListeners = this.unauthorizedListeners.filter((f) => f !== fn);
+    };
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -191,6 +219,10 @@ export class AgentCliClient {
       // 올바르지 않습니다'가 온다. 예전에는 늘 'API 키가 맞지 않습니다'라
       // 계정으로 로그인하는데 키를 물어보는 것처럼 보였다.
       if (res.status === 401) {
+        if (!path.startsWith('/auth/') && !this.unauthorized) {
+          this.unauthorized = true;
+          for (const fn of this.unauthorizedListeners) fn();
+        }
         throw new AgentCliError(err?.message ?? '로그인이 풀렸습니다. 다시 로그인하세요.', 401);
       }
       throw new AgentCliError(err?.message ?? `요청 실패 (${res.status})`, res.status);

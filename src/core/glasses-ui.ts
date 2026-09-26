@@ -477,6 +477,8 @@ export class GlassesUI {
 
   /** SSE가 막혀 있는지. 막혀 있으면 폴링을 촘촘히 돈다. */
   private sseDown = false;
+  /** 서버에서 읽는 데 성공한 적이 있는지. 로그인이 풀렸다고 알릴 때 쓴다. */
+  private loggedIn = false;
   /** 지금 걸린 폴링 주기. 같은 값으로 다시 걸지 않으려고 둔다. */
   private pollMs = 0;
 
@@ -514,6 +516,13 @@ export class GlassesUI {
     // 구독을 뒤에 두면 그런 경우에 영영 붙지 못해, 할 일을 바꿔도
     // 화면이 그대로다.
     agentCli.onConnectionChange(() => this.watchServerData());
+    // 쓰는 중에 토큰이 폐기되거나 만료되면 안경에도 알린다. 로그인 전의
+    // 401(아직 토큰이 없음)에는 이미 '폰에서 인증' 안내가 떠 있다.
+    agentCli.onUnauthorized(() => {
+      if (!this.loggedIn) return;
+      this.loggedIn = false;
+      void this.glasses.showText('로그인이 풀렸습니다.\n\n폰에서 다시 로그인해 주세요.').catch(() => undefined);
+    });
     this.watchServerData();
 
     await this.glasses.connect();
@@ -565,6 +574,7 @@ export class GlassesUI {
 
     // 첫 화면은 홈이다. 상단 요약에 쓸 값을 채워야 0으로 보이지 않는다.
     // 알림·체크리스트는 서버가 직접 주므로 맥이 꺼져 있어도 읽힌다.
+    this.loggedIn = true;
     await this.refreshSummary();
   }
 
@@ -1563,6 +1573,7 @@ export class GlassesUI {
    * 그때 읽은 값은 비어 있다.
    */
   async refreshHome(): Promise<void> {
+    this.loggedIn = true;
     await this.refreshSummary();
   }
 
@@ -1707,6 +1718,9 @@ export class GlassesUI {
 
   /** 홈 상단 요약에 쓰는 값을 모은다. */
   private async refreshSummary(): Promise<void> {
+    // 401을 받은 뒤로는 다시 로그인할 때까지 서버를 두드리지 않는다.
+    // agentCli.canPoll 참고.
+    if (!agentCli.canPoll) return;
     try {
       const { items, unread } = await agentCli.listNotifications();
       this.notifications = items;

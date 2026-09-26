@@ -60,6 +60,17 @@ export class G2Display {
   private mode: 'text' | 'list' | 'none' = 'text';
   /** 브리지 호출을 직렬화한다. 동시 호출은 연결을 끊을 수 있다. */
   private queue: Promise<unknown> = Promise.resolve();
+  /**
+   * 지금 세워둔 리스트의 내용. mode가 'list'일 때만 뜻이 있다.
+   *
+   * 리스트를 rebuild하면 선택이 첫 항목으로 돌아간다. SDK에는 선택 위치를
+   * 정해주는 값이 없어 되돌릴 방법도 없다. 주기 갱신이 같은 내용을 다시
+   * 그릴 때마다 스크롤해 둔 자리가 맨 위로 튀었다 — 링으로 내려가다
+   * 5초마다 처음으로 돌아가는 증상이 이것이었다. 그래서 같은 목록이면
+   * 다시 세우지 않는다.
+   */
+  private listKey = '';
+  private listHeader = '';
 
   async init(): Promise<Bridge> {
     this.bridge = await waitForEvenAppBridge();
@@ -183,7 +194,36 @@ export class G2Display {
     const names = items.slice(0, 20).map((s) => clamp(s.replace(/\n/g, ' '), 64));
     if (names.length === 0) names.push('(비어 있음)');
 
+    const key = JSON.stringify([names, side ?? []]);
+    const headerText = clamp(header, 60);
+
     await this.enqueue(async () => {
+      if (this.mode === 'list' && this.listKey === key) {
+        if (this.listHeader === headerText) return;
+        // 목록은 그대로고 윗줄 요약만 바뀌었다. 윗줄만 제자리에서 고친다.
+        const ok = await withTimeout(
+          bridge.textContainerUpgrade(
+            new TextContainerUpgrade({
+              containerID: MAIN_ID,
+              containerName: MAIN_NAME,
+              contentOffset: 0,
+              contentLength: 0,
+              content: headerText,
+            }),
+          ),
+          6000,
+          '머리줄 갱신',
+        ).catch(() => false);
+        if (ok) {
+          this.listHeader = headerText;
+          return;
+        }
+        // 고치지 못했으면 아래에서 통째로 다시 세운다.
+      }
+
+      // 다시 세우다 실패하면 화면에 무엇이 남았는지 모른다. 다음에는 꼭 다시 세운다.
+      this.listKey = '';
+
       const headerBox = new TextContainerProperty({
         xPosition: 0,
         yPosition: 0,
@@ -194,7 +234,7 @@ export class G2Display {
         paddingLength: 6,
         containerID: MAIN_ID,
         containerName: MAIN_NAME,
-        content: clamp(header, 60),
+        content: headerText,
         isEventCapture: 0,
       });
 
@@ -253,6 +293,8 @@ export class G2Display {
         '목록 표시',
       );
       this.mode = 'list';
+      this.listKey = key;
+      this.listHeader = headerText;
     });
   }
 

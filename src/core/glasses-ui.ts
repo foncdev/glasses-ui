@@ -25,6 +25,7 @@ import {
   type Item,
   type ItemState,
   type HomeView,
+  type SessionsView,
 } from './glasses.js';
 
 /**
@@ -52,6 +53,27 @@ type Screen =
   | 'settings';
 
 /** home에서 한 단계 아래로 내려갈 메뉴. 순서가 곧 커서 위치다. */
+/** 상태 표시줄 시각. HH:MM. */
+function clock(now = new Date()): string {
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * 마지막 활동이 얼마나 지났는지. 안경 한 줄에 들어가게 짧게 쓴다.
+ * 방금 · 12분 · 3시간 · 어제 · 4일
+ */
+export function timeAgo(iso: string | undefined, now = Date.now()): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(t)) return '';
+  const min = Math.floor((now - t) / 60_000);
+  if (min < 1) return '방금';
+  if (min < 60) return `${min}분`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour}시간`;
+  const day = Math.floor(hour / 24);
+  return day === 1 ? '어제' : `${day}일`;
+}
+
 const MENU = [
   { label: '에이전트', screen: 'sessions' as const },
   { label: '알림 보기', screen: 'notifications' as const },
@@ -686,12 +708,10 @@ export class GlassesUI {
       commands: this.snippets.length > 0 ? String(this.snippets.length) : '',
     };
 
-    const now = new Date();
-    const clock = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const status = [
       busy > 0 ? `작업 ${busy}` : '',
       this.sseDown ? '○ offline' : '● online',
-      clock,
+      clock(),
     ]
       .filter(Boolean)
       .join('  ');
@@ -719,6 +739,41 @@ export class GlassesUI {
       items: MENU.map((m) => ({ label: m.label, meta: meta[m.screen] ?? '' })),
       logo: this.showLogo ? this.glasses.logo : undefined,
       gauges,
+    };
+  }
+
+  /**
+   * 세션 화면에 그릴 것.
+   *
+   * 한 줄의 오른쪽에는 경과 시간을 둔다. 분 단위로 바뀌지만 세션 목록은
+   * 세션이 생기거나 없어질 때만 다시 그리므로(refresh 참고) 화면을 연
+   * 시점 기준으로 남는다. 자주 바뀌는 작업·승인 수는 상태 표시줄과
+   * 오른쪽 카드에 두어 글자만 고친다.
+   */
+  private sessionsView(): SessionsView {
+    const rows = this.sessions.map((s) => ({
+      state: this.statusOf(s),
+      title: s.title || '새 대화',
+      meta: timeAgo(s.lastActivityAt),
+    }));
+    const count = (...states: string[]) => rows.filter((r) => states.includes(r.state)).length;
+    const busy = count('running');
+    const approvals = count('pending', 'waiting');
+
+    return {
+      title: '$ relay ~/agents',
+      status: [busy > 0 ? `작업 ${busy}` : '', approvals > 0 ? `◆ 승인 ${approvals}` : '', clock()]
+        .filter(Boolean)
+        .join('   '),
+      rows,
+      counts: [
+        { state: 'running', label: '작업 중', count: busy },
+        { state: 'pending', label: '승인 요청', count: approvals },
+        { state: 'idle', label: '대기', count: count('idle', 'done') },
+        { state: 'offline', label: '종료', count: count('offline') },
+      ],
+      hint: '● 열기    ●● 뒤로',
+      total: `세션 ${rows.length}개`,
     };
   }
 
@@ -928,6 +983,10 @@ export class GlassesUI {
 
       // 4) 세션 목록.
       if (this.screen === 'sessions') {
+        if (this.glasses.showSessions) {
+          await this.glasses.showSessions(this.sessionsView());
+          return;
+        }
         const items: Item[] = this.sessions.map((s) => ({
           text: s.title || '새 대화',
           state: this.statusOf(s),

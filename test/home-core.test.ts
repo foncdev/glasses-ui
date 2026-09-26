@@ -8,11 +8,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { GlassesUI } from '../src/core/glasses-ui.js';
 import { agentCli } from '../src/core/agent-cli.js';
-import type { GestureEvent, GlassesAdapter, HomeView } from '../src/core/glasses.js';
+import type { GestureEvent, GlassesAdapter, HomeView, SessionsView } from '../src/core/glasses.js';
 import { GLASSES_LOGO } from '../src/adapters/g2-logo.js';
 
-async function homeWith(sessions: unknown[], sys?: unknown) {
+async function homeWith(sessions: unknown[], sys?: unknown, openSessions = false) {
   const views: HomeView[] = [];
+  const sessionViews: SessionsView[] = [];
   const glasses = {
     name: 'stub',
     logo: GLASSES_LOGO,
@@ -23,6 +24,9 @@ async function homeWith(sessions: unknown[], sys?: unknown) {
     async showText() {},
     async showHome(v: HomeView) {
       views.push(v);
+    },
+    async showSessions(v: SessionsView) {
+      sessionViews.push(v);
     },
     speak() {},
     stopSpeaking() {},
@@ -53,6 +57,10 @@ async function homeWith(sessions: unknown[], sys?: unknown) {
     const ui = new GlassesUI(glasses, { onLog: () => {} });
     await ui.start();
     await (ui as unknown as { refreshSummary(): Promise<void> }).refreshSummary();
+    if (openSessions) {
+      await (ui as unknown as { openMenu(t: string): Promise<void> }).openMenu('sessions');
+      return sessionViews.at(-1)! as unknown as HomeView;
+    }
     return views.at(-1)!;
   } finally {
     Object.assign(agentCli, orig);
@@ -87,4 +95,25 @@ test('시스템 상태를 읽으면 게이지를, 못 읽으면 게이지 없이
 
   const without = await homeWith(SESSIONS);
   assert.equal(without.gauges, undefined);
+});
+
+test('세션 화면은 상태 기호용 상태·경과 시간·상태별 개수를 넘긴다', async () => {
+  const now = Date.now();
+  const v = (await homeWith(
+    [
+      { id: 'a', title: '빌드', live: true, status: 'busy', lastActivityAt: new Date(now - 30_000).toISOString(), pending: [] },
+      { id: 'b', title: '', live: true, status: 'idle', lastActivityAt: new Date(now - 5 * 60_000).toISOString(), pending: [{ id: 'p' }] },
+      { id: 'c', title: '끝남', live: false, status: 'closed', lastActivityAt: new Date(now - 30 * 3600_000).toISOString(), pending: [] },
+    ],
+    undefined,
+    true,
+  )) as unknown as SessionsView;
+  assert.deepEqual(
+    v.rows.map((r) => [r.state, r.title, r.meta]),
+    [['running', '빌드', '방금'], ['pending', '새 대화', '5분'], ['offline', '끝남', '어제']],
+  );
+  assert.deepEqual(v.counts.map((c) => c.count), [1, 1, 0, 1]);
+  assert.match(v.status, /작업 1/);
+  assert.match(v.status, /◆ 승인 1/);
+  assert.equal(v.total, '세션 3개');
 });

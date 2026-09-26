@@ -6,9 +6,10 @@
  * 같은 화면에서 내용만 바뀔 때는 textContainerUpgrade를 쓴다.
  */
 
-import { clamp, type HomeView } from '../core/glasses.js';
+import { clamp, type HomeView, type SessionsView } from '../core/glasses.js';
 import { fitBytes } from './g2-bytes.js';
 import { layoutHome, type Box } from './g2-home.js';
+import { layoutSessions } from './g2-sessions.js';
 import {
   CreateStartUpPageContainer,
   ListContainerProperty,
@@ -34,6 +35,19 @@ const DIVIDER_ID = 5;
 const DIVIDER_NAME = 'divider';
 const STATS_ID = 6;
 const STATS_NAME = 'stats';
+// 세션 화면에서는 6번 칸이 아래 안내 줄이다.
+const FOOTER_NAME = 'footer';
+
+/** 꾸민 화면의 글자 칸 하나. live면 자리가 그대로일 때 글자만 고친다. */
+interface RichText {
+  id: number;
+  name: string;
+  box: Box;
+  text: string;
+  live?: boolean;
+  /** 목록이 없을 때 조작을 받는 칸. */
+  capture?: boolean;
+}
 
 /** 화면 크기. 옆 패널을 붙일 때 목록 폭을 여기서 나눈다. */
 const SCREEN_W = 576;
@@ -66,15 +80,15 @@ export class G2Display {
    * 다시 세워야(rebuild) 한다. 이 구분이 없으면 갱신이 조용히 실패해
    * 화면이 영영 안 바뀐다.
    */
-  private mode: 'text' | 'list' | 'home' | 'none' = 'text';
+  private mode: 'text' | 'list' | 'home' | 'sessions' | 'none' = 'text';
   /**
-   * 지금 세워둔 홈의 구조. 목록 글자·로고·게이지 줄 수가 같으면 다시
-   * 세우지 않고, 바뀐 글자 칸만 고친다. 목록을 다시 세우면 선택이 첫
-   * 항목으로 돌아가기 때문이다(listKey와 같은 이유).
+   * 지금 세워둔 꾸민 화면(홈·세션)의 구조. 목록 글자와 칸 구성이 같으면
+   * 다시 세우지 않고, 바뀐 글자 칸만 고친다. 목록을 다시 세우면 선택이
+   * 첫 항목으로 돌아가기 때문이다(listKey와 같은 이유).
    */
-  private homeKey = '';
-  /** 홈의 글자 칸별 지금 내용. 바뀐 칸만 고치는 데 쓴다. */
-  private homeTexts = new Map<number, string>();
+  private richKey = '';
+  /** 꾸민 화면의 글자 칸별 지금 내용. 바뀐 칸만 고치는 데 쓴다. */
+  private richTexts = new Map<number, string>();
   /** 브리지 호출을 직렬화한다. 동시 호출은 연결을 끊을 수 있다. */
   private queue: Promise<unknown> = Promise.resolve();
   /**
@@ -315,118 +329,143 @@ export class G2Display {
     });
   }
 
-  /**
-   * 꾸민 홈 화면. 배치는 g2-home.ts가 정한다.
-   *
-   * 상태 표시줄·게이지처럼 자주 바뀌는 칸은 글자만 고치고, 목록 글자나
-   * 구조가 바뀔 때만 다시 세운다.
-   */
+  /** 꾸민 홈 화면. 배치는 g2-home.ts가 정한다. */
   async showHome(view: HomeView): Promise<void> {
+    const l = layoutHome(view);
+    const texts: RichText[] = [
+      { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+      { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+      // 빈 글은 기기가 거부할 수 있어 공백 한 칸을 넣는다.
+      { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+    ];
+    if (l.card) texts.push({ id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text });
+    if (l.stats) texts.push({ id: STATS_ID, name: STATS_NAME, box: l.stats, text: l.stats.text, live: true });
+    await this.showRich('home', texts, { box: l.list, items: l.list.items });
+  }
+
+  /** 꾸민 세션 화면. 배치는 g2-sessions.ts가 정한다. 세션이 없으면 안내 카드가 조작을 받는다. */
+  async showSessions(view: SessionsView): Promise<void> {
+    const l = layoutSessions(view);
+    const texts: RichText[] = [
+      { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+      { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+      { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+      // 세션이 있으면 상태별 개수라 자주 바뀐다. 없으면 고정 안내다.
+      { id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text, live: !l.card.capture, capture: l.card.capture },
+      { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
+    ];
+    await this.showRich('sessions', texts, l.list ? { box: l.list, items: l.list.items } : undefined);
+  }
+
+  /**
+   * 여러 칸으로 꾸민 화면을 그린다.
+   *
+   * 목록 글자와 칸 구성이 그대로면 다시 세우지 않고 live 칸의 바뀐 글자만
+   * 고친다. 목록을 다시 세우면 선택이 첫 항목으로 돌아가기 때문이다.
+   * 목록이 없으면 capture 칸이 조작을 받는다.
+   */
+  private async showRich(
+    kind: 'home' | 'sessions',
+    texts: RichText[],
+    list?: { box: Box; items: string[] },
+  ): Promise<void> {
     const bridge = this.bridge;
     if (!bridge) return;
-    const layout = layoutHome(view);
 
+    // 목록 글자, 고정 칸의 글자, 칸의 자리·크기가 같으면 같은 화면이다.
     const key = JSON.stringify([
-      layout.list.items,
-      layout.card?.text ?? null,
-      layout.stats ? layout.stats.h : null,
+      kind,
+      list?.items ?? null,
+      texts.map((t) => [t.id, t.box.x, t.box.y, t.box.w, t.box.h, t.live ? null : t.text]),
     ]);
-    const texts = new Map<number, [string, string]>([
-      [MAIN_ID, [MAIN_NAME, layout.statusLeft.text]],
-      [STATUS_ID, [STATUS_NAME, layout.statusRight.text]],
-    ]);
-    if (layout.stats) texts.set(STATS_ID, [STATS_NAME, layout.stats.text]);
+    const live = texts.filter((t) => t.live);
 
     await this.enqueue(async () => {
-      if (this.mode === 'home' && this.homeKey === key) {
+      if (this.mode === kind && this.richKey === key) {
         let ok = true;
-        for (const [id, [name, text]] of texts) {
-          if (this.homeTexts.get(id) === text) continue;
+        for (const t of live) {
+          if (this.richTexts.get(t.id) === t.text) continue;
           const done = await withTimeout(
             bridge.textContainerUpgrade(
               new TextContainerUpgrade({
-                containerID: id,
-                containerName: name,
+                containerID: t.id,
+                containerName: t.name,
                 contentOffset: 0,
                 contentLength: 0,
-                content: text,
+                content: t.text,
               }),
             ),
             6000,
-            '홈 갱신',
+            '화면 갱신',
           ).catch(() => false);
           if (!done) {
             ok = false;
             break;
           }
-          this.homeTexts.set(id, text);
+          this.richTexts.set(t.id, t.text);
         }
         if (ok) return;
         // 고치지 못했으면 아래에서 통째로 다시 세운다.
       }
 
-      this.homeKey = '';
-      const textBox = (id: number, name: string, b: Box, content: string) =>
-        new TextContainerProperty({
-          xPosition: b.x,
-          yPosition: b.y,
-          width: b.w,
-          height: b.h,
-          paddingLength: b.padding,
-          borderWidth: b.border?.width ?? 0,
-          borderColor: b.border?.color ?? 0,
-          ...(b.border?.radius ? { borderRadius: b.border.radius } : {}),
-          ...(b.brightness !== undefined ? { textColor: b.brightness } : {}),
-          containerID: id,
-          containerName: name,
-          content,
-          isEventCapture: 0,
-        });
+      this.richKey = '';
+      const textObject = texts.map(
+        (t) =>
+          new TextContainerProperty({
+            xPosition: t.box.x,
+            yPosition: t.box.y,
+            width: t.box.w,
+            height: t.box.h,
+            paddingLength: t.box.padding,
+            borderWidth: t.box.border?.width ?? 0,
+            borderColor: t.box.border?.color ?? 0,
+            ...(t.box.border?.radius ? { borderRadius: t.box.border.radius } : {}),
+            ...(t.box.brightness !== undefined ? { textColor: t.box.brightness } : {}),
+            containerID: t.id,
+            containerName: t.name,
+            content: t.text,
+            isEventCapture: !list && t.capture ? 1 : 0,
+          }),
+      );
 
-      const textObject = [
-        textBox(MAIN_ID, MAIN_NAME, layout.statusLeft, layout.statusLeft.text),
-        textBox(STATUS_ID, STATUS_NAME, layout.statusRight, layout.statusRight.text),
-        // 빈 글은 기기가 거부할 수 있어 공백 한 칸을 넣는다.
-        textBox(DIVIDER_ID, DIVIDER_NAME, layout.divider, ' '),
-      ];
-      if (layout.card) textObject.push(textBox(SIDE_ID, SIDE_NAME, layout.card, layout.card.text));
-      if (layout.stats) textObject.push(textBox(STATS_ID, STATS_NAME, layout.stats, layout.stats.text));
-
-      const l = layout.list;
-      const list = new ListContainerProperty({
-        xPosition: l.x,
-        yPosition: l.y,
-        width: l.w,
-        height: l.h,
-        borderWidth: 0,
-        borderColor: 0,
-        paddingLength: l.padding,
-        containerID: LIST_ID,
-        containerName: LIST_NAME,
-        isEventCapture: 1,
-        itemContainer: new ListItemContainerProperty({
-          itemCount: l.items.length,
-          itemWidth: 0,
-          isItemSelectBorderEn: 1,
-          // 배치가 이미 바이트를 맞추지만, 넘치면 화면이 멈추므로 한 번 더 막는다.
-          itemName: l.items.map((i) => fitBytes(i)),
-        }),
-      });
+      const listObject = list
+        ? [
+            new ListContainerProperty({
+              xPosition: list.box.x,
+              yPosition: list.box.y,
+              width: list.box.w,
+              height: list.box.h,
+              borderWidth: 0,
+              borderColor: 0,
+              paddingLength: list.box.padding,
+              containerID: LIST_ID,
+              containerName: LIST_NAME,
+              isEventCapture: 1,
+              itemContainer: new ListItemContainerProperty({
+                itemCount: list.items.length,
+                itemWidth: 0,
+                isItemSelectBorderEn: 1,
+                // 배치가 이미 바이트를 맞추지만, 넘치면 화면이 멈추므로 한 번 더 막는다.
+                itemName: list.items.map((i) => fitBytes(i)),
+              }),
+            }),
+          ]
+        : [];
 
       await withTimeout(
         bridge.rebuildPageContainer(
           new RebuildPageContainer({
-            containerTotalNum: textObject.length + 1,
+            containerTotalNum: textObject.length + listObject.length,
             textObject,
-            listObject: [list],
+            ...(listObject.length ? { listObject } : {}),
           }),
         ),
         8000,
-        '홈 표시',
+        kind === 'home' ? '홈 표시' : '세션 표시',
       );
-      this.mode = 'home';
-      this.homeKey = key;
-      this.homeTexts = new Map([...texts].map(([id, [, text]]) => [id, text]));
+      this.mode = kind;
+      this.richKey = key;
+      this.richTexts = new Map(texts.map((t) => [t.id, t.text]));
     });
   }
 

@@ -18,6 +18,7 @@ import {
   type ItemLike,
   type ItemState,
   type HomeView,
+  type SessionsView,
 } from '../core/glasses.js';
 import { G2Display } from './g2-display.js';
 import { GLASSES_LOGO } from './g2-logo.js';
@@ -173,6 +174,10 @@ export class G2Adapter implements GlassesAdapter {
 
   async showHome(view: HomeView): Promise<void> {
     await this.display.showHome(view);
+  }
+
+  async showSessions(view: SessionsView): Promise<void> {
+    await this.display.showSessions(view);
   }
 
   onGesture(handler: (event: GestureEvent) => void): () => void {

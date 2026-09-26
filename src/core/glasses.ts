@@ -104,6 +104,25 @@ export interface HomeView {
   gauges?: ReadonlyArray<{ label: string; ratio: number; text: string }>;
 }
 
+/** 세션 화면에 그릴 것. 어떻게 그릴지는 어댑터가 정한다(showSessions). */
+export interface SessionsView {
+  /** 상태 표시줄 왼쪽. */
+  title: string;
+  /** 상태 표시줄 오른쪽. 작업·승인 수와 시각처럼 자주 바뀌는 값. */
+  status: string;
+  /**
+   * 세션 한 줄. 목록을 스크롤해도 앱에 이벤트가 오지 않아 "고른 세션"의
+   * 자세한 내용을 옆에 띄울 수 없다. 그래서 한 줄에 필요한 것을 담는다.
+   * meta는 경과 시간처럼 짧은 값.
+   */
+  rows: ReadonlyArray<{ state: ItemState; title: string; meta: string }>;
+  /** 상태별 개수. 고른 줄과 상관없이 보여줄 수 있는 요약이다. */
+  counts: ReadonlyArray<{ state: ItemState; label: string; count: number }>;
+  /** 아래 안내 줄. 왼쪽은 조작, 오른쪽은 전체 수. */
+  hint: string;
+  total: string;
+}
+
 export interface GlassesAdapter {
   /** 사람이 읽을 기기 이름. 로그와 화면에 쓴다. */
   readonly name: string;
@@ -147,6 +166,9 @@ export interface GlassesAdapter {
    * 꾸밀지는 기기 화면을 아는 어댑터가 정한다.
    */
   showHome?(view: HomeView): Promise<void>;
+
+  /** 세션 화면을 기기에 맞게 꾸며 그린다. 없으면 본체가 showList로 그린다. */
+  showSessions?(view: SessionsView): Promise<void>;
 
   /** 제스처를 구독한다. 반환값을 호출하면 끊는다. */
   onGesture(handler: (event: GestureEvent) => void): () => void;

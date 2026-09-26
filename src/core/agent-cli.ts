@@ -20,6 +20,51 @@ export interface SessionInfo {
 }
 
 /** 서버가 쌓아두는 알림. 완료·오류를 나중에 다시 볼 수 있다. */
+/**
+ * 맥의 지금 상태. top·ps를 안경에서 읽을 수 있게 줄인 값이다.
+ *
+ * 숫자를 못 구하면 -1이나 0이 온다. 화면을 오류로 바꾸는 대신 그 칸만
+ * 비우는 편이 낫다.
+ */
+export interface SysSummary {
+  cpuPercent: number;
+  memUsedGB: number;
+  memTotalGB: number;
+  load: number[];
+  uptime: string;
+  host: string;
+  os: string;
+}
+
+/** 미리 등록해 둔 명령. 안경에서는 골라 실행만 한다. */
+export interface Snippet {
+  id: string;
+  label: string;
+  command: string;
+  kind: 'once' | 'cron';
+  everyMinutes?: number;
+  lastRunAt?: string;
+  lastExitCode?: number;
+}
+
+/** 명령을 한 번 돌린 결과. */
+export interface RunResult {
+  output: string;
+  exitCode: number;
+  timedOut: boolean;
+  tookMs: number;
+  /** 되돌릴 수 없어 보이는 이유. 막혔을 때 함께 온다. */
+  risks?: { reason: string; destructive: boolean }[];
+}
+
+/** 프로세스 한 줄. CPU 많이 쓰는 순서로 온다. */
+export interface SysProc {
+  pid: number;
+  cpu: number;
+  mem: number;
+  name: string;
+}
+
 export interface Notification {
   id: string;
   title: string;
@@ -208,6 +253,62 @@ export class AgentCliClient {
   // --- 알림 ---
   //
   // 서버가 쌓아둔다. 안경에서 한 번 놓쳐도 다시 볼 수 있다.
+
+  // --- 시스템 상태 ---
+  //
+  // terminal-agent가 갖고 있다. 터미널을 만들지 않고도 읽을 수 있다.
+
+  async sysSummary(): Promise<SysSummary> {
+    return this.request<SysSummary>('/sys/summary');
+  }
+
+  async sysProcs(n = 8): Promise<SysProc[]> {
+    const { procs } = await this.request<{ procs: SysProc[] }>(`/sys/procs?n=${n}`);
+    return procs;
+  }
+
+  // --- 등록한 명령 ---
+
+  async listSnippets(): Promise<Snippet[]> {
+    const { items } = await this.request<{ items: Snippet[] }>('/snippets');
+    return items;
+  }
+
+  /**
+   * 등록한 명령을 실행한다.
+   *
+   * 되돌릴 수 없어 보이는 명령은 서버가 409로 막는다. 그때는
+   * needsConfirm이 참으로 와서, 부르는 쪽이 사용자에게 묻고 confirm을
+   * 실어 다시 부른다.
+   */
+  async runSnippet(
+    id: string,
+    confirm = false,
+  ): Promise<{ result?: RunResult; needsConfirm?: boolean; risks?: RunResult['risks'] }> {
+    const res = await fetch(`${this.baseUrl}/snippets/${id}/run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.apiKey
+          ? { Authorization: `Bearer ${this.apiKey}`, 'x-api-key': this.apiKey }
+          : {}),
+      },
+      body: JSON.stringify({ confirm }),
+    });
+
+    const text = await res.text();
+    const body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+
+    // 409는 오류가 아니라 "확인이 필요하다"는 답이다.
+    if (res.status === 409) {
+      return { needsConfirm: true, risks: body.risks as RunResult['risks'] };
+    }
+    if (!res.ok) {
+      const err = body.error as { message?: string } | undefined;
+      throw new AgentCliError(err?.message ?? `실행 실패 (${res.status})`);
+    }
+    return { result: body as unknown as RunResult };
+  }
 
   async listNotifications(): Promise<{ items: Notification[]; unread: number }> {
     return this.request<{ items: Notification[]; unread: number }>('/notifications');

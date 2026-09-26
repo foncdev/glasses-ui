@@ -12,6 +12,9 @@ import {
   type Notification,
   type SessionEvent,
   type SessionInfo,
+  type Snippet,
+  type SysProc,
+  type SysSummary,
 } from './agent-cli.js';
 import {
   clamp,
@@ -42,6 +45,9 @@ type Screen =
   | 'notifications'
   | 'notification'
   | 'checklist'
+  | 'system'
+  | 'commands'
+  | 'command-result'
   | 'settings';
 
 /** home에서 한 단계 아래로 내려갈 메뉴. 순서가 곧 커서 위치다. */
@@ -49,6 +55,8 @@ const MENU = [
   { label: '에이전트', screen: 'sessions' as const },
   { label: '알림 보기', screen: 'notifications' as const },
   { label: '체크 보기', screen: 'checklist' as const },
+  { label: '시스템', screen: 'system' as const },
+  { label: '명령', screen: 'commands' as const },
   { label: '설정', screen: 'settings' as const },
 ];
 
@@ -184,6 +192,112 @@ function wrapToWidth(text: string, cols: number, maxRows: number): string[] {
   return rows;
 }
 
+/**
+ * 시스템 화면을 줄 목록으로 짠다.
+ *
+ * top을 그대로 보여주지 않는다. ANSI 이스케이프가 깨지고, 한 줄이
+ * 80칸을 넘어 접히고, 갱신을 계속 밀어 배터리를 먹는다. 여기서는
+ * 숫자만 뽑아 한눈에 읽히게 둔다.
+ *
+ * 순수 함수로 둔다. 화면 없이 글자만 보고 확인할 수 있어야 한다.
+ */
+export function systemView(
+  sys: SysSummary | undefined,
+  procs: readonly SysProc[],
+): { header: string; items: string[] } {
+  if (!sys) {
+    return { header: '시스템 · 더블탭 뒤로', items: ['읽는 중…'] };
+  }
+
+  // 못 구한 값은 칸을 비운다. -1이나 0을 그대로 보여주면 오해한다.
+  const cpu = sys.cpuPercent >= 0 ? `CPU ${Math.round(sys.cpuPercent)}%` : 'CPU —';
+  const mem =
+    sys.memTotalGB > 0
+      ? `MEM ${sys.memUsedGB.toFixed(1)}/${Math.round(sys.memTotalGB)}G`
+      : 'MEM —';
+  const load = sys.load.length > 0 ? `로드 ${sys.load[0].toFixed(1)}` : '';
+
+  const items = [[cpu, mem].join('  '), [load, sys.uptime ? `가동 ${sys.uptime}` : '']
+    .filter(Boolean)
+    .join(' · ')].filter(Boolean);
+
+  if (procs.length === 0) {
+    items.push('', '프로세스를 읽지 못했습니다');
+    return { header: '시스템 · 더블탭 뒤로', items };
+  }
+
+  items.push('');
+  for (const p of procs) {
+    /*
+     * 이름을 폭에 맞춰 자르고 사용률을 오른쪽에 붙인다.
+     *
+     * 사용률을 먼저 계산해 그만큼 이름 자리를 줄인다. 이름을 먼저
+     * 자르면 긴 이름에서 사용률이 다음 줄로 밀린다.
+     */
+    const pct = p.cpu >= 0 ? `${p.cpu.toFixed(1)}%` : '—';
+    const room = SYS_COLS - displayWidth(pct) - 1;
+    const name = clampWidth(p.name, Math.max(room, 8));
+    const gap = Math.max(SYS_COLS - displayWidth(name) - displayWidth(pct), 1);
+    items.push(name + ' '.repeat(gap) + pct);
+  }
+
+  return { header: `${sys.host || '시스템'} · 더블탭 뒤로`, items };
+}
+
+/** 시스템 화면 한 줄의 칸 수. */
+const SYS_COLS = 38;
+
+/**
+ * 명령 실행 결과 화면을 글자로 짠다.
+ *
+ * 명령 출력은 폭을 모른다 — ps는 전체 경로를 뱉어 한 줄이 100칸을
+ * 넘는다. 기기 자동 줄바꿈에 맡기면 몇 줄이 될지 몰라 아래 안내가
+ * 화면 밖으로 밀린다. 그래서 여기서 폭과 줄 수를 정해 둔다.
+ *
+ * 순수 함수로 둔다. 화면 없이 글자만 보고 확인할 수 있어야 한다.
+ */
+export function resultView(
+  r: { label: string; text: string; awaitingConfirm?: boolean } | undefined,
+): string {
+  if (!r) return '결과가 없습니다\n\n더블탭: 뒤로';
+
+  /*
+   * 줄을 아낀다.
+   *
+   * 화면은 288px, 한 줄 27px이라 열 줄이 전부다. 머리말과 이름 사이에
+   * 빈 줄까지 넣으면 본문에 두세 줄밖에 남지 않아 결과를 못 읽는다.
+   * 머리말에 갈래를, 이름에 무엇을 돌렸는지 담아 두 줄로 끝낸다.
+   */
+  const lines = [
+    `${r.awaitingConfirm ? '! 확인 필요' : '* 실행 결과'} · ${clampWidth(r.label, 24)}`,
+    '',
+  ];
+
+  // 줄마다 폭에 맞춰 자른다. 원래 줄바꿈은 살린다 — 표 꼴로 나오는
+  // 출력(ps·df)은 줄이 곧 뜻이라 이어 붙이면 읽을 수 없다.
+  const body = r.text.split('\n').slice(0, RESULT_ROWS);
+  for (const line of body) {
+    lines.push(clampWidth(line.replace(/\t/g, ' '), RESULT_COLS));
+  }
+  if (r.text.split('\n').length > RESULT_ROWS) {
+    lines.push('…(폰에서 전문 보기)');
+  }
+
+  lines.push('', r.awaitingConfirm ? '탭: 실행 · 더블탭: 취소' : '더블탭: 뒤로');
+  return lines.join('\n');
+}
+
+/** 결과 한 줄에 들어가는 칸 수. */
+const RESULT_COLS = 40;
+/*
+ * 결과로 보여줄 줄 수.
+ *
+ * 화면은 288px이고 한 줄이 27px이라 열 줄이 전부다. 머리말·빈 줄·
+ * 잘림 안내·빈 줄·나가기 안내가 다섯 줄을 쓰므로 본문에 남는 것은
+ * 다섯이다. 더 넣으면 아래 안내가 화면을 벗어나 나가는 방법을 알 수 없다.
+ */
+const RESULT_ROWS = 5;
+
 /** 팝업 한 줄에 들어가는 칸 수. 화면 폭(64칸)보다 좁게 둬 여백을 남긴다. */
 const NOTICE_COLS = 40;
 /** 본문에 허용하는 줄 수. 자세한 내용은 알림 목록에서 본다. */
@@ -281,6 +395,27 @@ export class GlassesUI {
    * 알림이 "첫 조회"로 취급돼 조용히 묻힌다.
    */
   private lastSeenNotifId: string | null = null;
+
+  /** 맥의 지금 상태. 시스템 화면에서 쓴다. */
+  private sys?: SysSummary;
+  private procs: SysProc[] = [];
+
+  /** 등록해 둔 명령. 안경에서는 골라 실행만 한다. */
+  private snippets: Snippet[] = [];
+  private cmdCursor = 0;
+  /**
+   * 마지막 실행 결과. 결과 화면에서 보여준다.
+   *
+   * 확인이 필요해 막힌 경우도 여기 담는다 — 무엇 때문에 막혔는지
+   * 보여주고 한 번 더 탭하면 실행한다.
+   */
+  private cmdResult?: {
+    label: string;
+    text: string;
+    /** 참이면 아직 실행하지 않았고, 탭하면 실행한다. */
+    awaitingConfirm?: boolean;
+    snippetId?: string;
+  };
 
   /** SSE가 막혀 있는지. 막혀 있으면 폴링을 촘촘히 돈다. */
   private sseDown = false;
@@ -785,7 +920,39 @@ export class GlassesUI {
         return;
       }
 
-      // 8) 설정.
+      // 8) 시스템 상태.
+      if (this.screen === 'system') {
+        const view = systemView(this.sys, this.procs);
+        await this.glasses.showList(view.header, view.items);
+        return;
+      }
+
+      // 9) 등록한 명령 목록.
+      if (this.screen === 'commands') {
+        if (this.snippets.length === 0) {
+          await this.glasses.showList('명령 · 더블탭 뒤로', [
+            '등록된 명령이 없습니다',
+            '웹에서 먼저 등록하세요',
+          ]);
+          return;
+        }
+        await this.glasses.showList(
+          `명령 ${this.cmdCursor + 1}/${this.snippets.length} · 더블탭 뒤로`,
+          this.snippets.map((x, i) => ({
+            text: x.kind === 'cron' ? `${x.label} (예약)` : x.label,
+            state: i === this.cmdCursor ? 'running' : undefined,
+          })),
+        );
+        return;
+      }
+
+      // 10) 실행 결과.
+      if (this.screen === 'command-result') {
+        await this.glasses.showText(resultView(this.cmdResult));
+        return;
+      }
+
+      // 11) 설정.
       if (this.screen === 'settings') {
         await this.glasses.showList('설정 · 더블탭 뒤로', [
           this.glasses.isVoiceEnabled ? '음성: 켜짐' : '음성: 꺼짐',
@@ -1003,7 +1170,14 @@ export class GlassesUI {
   private moveCursor(
     gesture: string,
     selectedIndex: number | undefined,
-    field: 'cursor' | 'menuCursor' | 'setCursor' | 'notifCursor' | 'histCursor' | 'checkCursor',
+    field:
+      | 'cursor'
+      | 'menuCursor'
+      | 'setCursor'
+      | 'notifCursor'
+      | 'histCursor'
+      | 'checkCursor'
+      | 'cmdCursor',
     count: number,
   ): boolean {
     const last = Math.max(count - 1, 0);
@@ -1114,6 +1288,75 @@ export class GlassesUI {
     });
   }
 
+  /**
+   * 맥의 지금 상태를 다시 읽는다.
+   *
+   * 둘을 나란히 부른다. 하나가 느려도 다른 하나는 보여줄 수 있다.
+   * terminal-agent가 꺼져 있으면 둘 다 실패하는데, 그때는 화면에
+   * 무엇이 없는지 적어 준다 — 빈 목록만 두면 고장으로 보인다.
+   */
+  private async refreshSystem(): Promise<void> {
+    const [sys, procs] = await Promise.allSettled([
+      agentCli.sysSummary(),
+      agentCli.sysProcs(8),
+    ]);
+
+    if (sys.status === 'fulfilled') {
+      this.sys = sys.value;
+    } else {
+      this.log(`시스템 상태를 읽지 못했습니다: ${sys.reason}`, 'warn');
+    }
+    this.procs = procs.status === 'fulfilled' ? procs.value : [];
+
+    // 화면을 옮겼으면 그리지 않는다. 늦게 온 응답이 다른 화면을 덮으면
+    // 사용자가 보고 있던 것이 사라진다.
+    if (this.screen === 'system') await this.render();
+  }
+
+  /**
+   * 등록한 명령을 실행하고 결과 화면으로 넘어간다.
+   *
+   * 되돌릴 수 없어 보이는 명령은 서버가 막는다. 그때는 무엇 때문에
+   * 막혔는지 보여주고, 한 번 더 탭하면 실행한다. 안경은 탭 한 번에
+   * 일이 벌어지므로 손이 스쳐도 되돌릴 수 없는 일은 하지 않게 한다.
+   */
+  private async runSnippet(s: Snippet, confirm = false): Promise<void> {
+    this.wake();
+    this.screen = 'command-result';
+    this.cmdResult = { label: s.label, text: '실행 중…', snippetId: s.id };
+    await this.render();
+
+    try {
+      const res = await agentCli.runSnippet(s.id, confirm);
+
+      if (res.needsConfirm) {
+        const why = (res.risks ?? []).map((r) => `· ${r.reason}`).join('\n');
+        this.cmdResult = {
+          label: s.label,
+          text: `${why || '되돌릴 수 없는 명령입니다.'}\n\n그래도 실행할까요?`,
+          awaitingConfirm: true,
+          snippetId: s.id,
+        };
+        this.glasses.speak('확인이 필요합니다');
+        await this.render();
+        return;
+      }
+
+      const r = res.result;
+      const head = r?.timedOut ? '(시간 초과) ' : r?.exitCode ? `(종료 ${r.exitCode}) ` : '';
+      this.cmdResult = {
+        label: s.label,
+        text: head + (r?.output?.trim() || '(출력 없음)'),
+        snippetId: s.id,
+      };
+      this.log(`[${s.label}] 종료 ${r?.exitCode ?? '?'} (${r?.tookMs ?? 0}ms)`, 'ok');
+    } catch (err) {
+      this.cmdResult = { label: s.label, text: `실패: ${(err as Error).message}`, snippetId: s.id };
+      this.log(`[${s.label}] 실행 실패: ${(err as Error).message}`, 'error');
+    }
+    await this.render();
+  }
+
   /** 홈 상단 요약에 쓰는 값을 모은다. */
   private async refreshSummary(): Promise<void> {
     try {
@@ -1167,6 +1410,26 @@ export class GlassesUI {
     }
     if (target === 'checklist') {
       await this.openChecklist(true);
+      return;
+    }
+    if (target === 'system') {
+      this.screen = 'system';
+      // 먼저 '읽는 중…'을 띄운다. 명령이 도는 동안 빈 화면이면
+      // 눌리지 않은 것처럼 보인다.
+      await this.render();
+      await this.refreshSystem();
+      return;
+    }
+    if (target === 'commands') {
+      this.screen = 'commands';
+      this.cmdCursor = 0;
+      await this.render();
+      try {
+        this.snippets = await agentCli.listSnippets();
+      } catch (err) {
+        this.log(`명령 목록을 읽지 못했습니다: ${(err as Error).message}`, 'warn');
+      }
+      await this.render();
       return;
     }
     if (target === 'settings') {
@@ -1355,6 +1618,48 @@ export class GlassesUI {
         this.screen = this.openNotif?.id ? 'notifications' : 'history';
         this.openNotif = null;
         await this.render();
+      }
+      return;
+    }
+
+    /*
+     * 시스템: 탭으로 다시 읽고 더블탭으로 나간다.
+     *
+     * 스스로 갱신하지 않는다. top처럼 계속 새로 그리면 BLE로 화면을
+     * 매번 보내 배터리를 먹고, 숫자가 쉬지 않고 흔들려 읽기 어렵다.
+     * 지금 값을 보고 싶을 때 탭하면 된다.
+     */
+    if (this.screen === 'system') {
+      if (gesture === 'doubleTap') return this.goHome();
+      if (gesture === 'tap') await this.refreshSystem();
+      return;
+    }
+
+    // 명령 목록: 골라서 탭하면 실행한다.
+    if (this.screen === 'commands') {
+      if (gesture === 'doubleTap') return this.goHome();
+      if (this.moveCursor(gesture, selectedIndex, 'cmdCursor', this.snippets.length)) {
+        await this.render();
+        return;
+      }
+      if (gesture === 'tap') {
+        const s = this.snippets[this.cmdCursor];
+        if (s) await this.runSnippet(s);
+      }
+      return;
+    }
+
+    // 실행 결과: 확인을 기다리는 중이면 탭이 실행이다.
+    if (this.screen === 'command-result') {
+      if (gesture === 'doubleTap') {
+        this.cmdResult = undefined;
+        this.screen = 'commands';
+        await this.render();
+        return;
+      }
+      if (gesture === 'tap' && this.cmdResult?.awaitingConfirm) {
+        const s = this.snippets.find((x) => x.id === this.cmdResult?.snippetId);
+        if (s) await this.runSnippet(s, true);
       }
       return;
     }

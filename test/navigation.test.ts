@@ -65,6 +65,19 @@ function stubGlasses() {
   };
 }
 
+/**
+ * 홈 메뉴에서 이름으로 위치를 찾는다.
+ *
+ * 숫자를 박아두면 메뉴가 하나 늘 때마다 테스트가 깨진다. 실제로
+ * '시스템'이 들어오면서 설정이 3에서 4로 밀렸다.
+ */
+function menuIndex(shown: { items: string[] }[], label: string): number {
+  const items = shown.at(-1)!.items;
+  const i = items.indexOf(label);
+  if (i < 0) throw new Error(`홈 메뉴에 '${label}'이 없다: ${items.join(', ')}`);
+  return i;
+}
+
 const SESSIONS = [
   { id: 'a', title: '첫 세션', live: true, status: 'idle' },
   { id: 'b', title: '둘째 세션', live: true, status: 'busy' },
@@ -124,11 +137,11 @@ async function atHome() {
 /** 제스처가 비동기 처리를 마칠 때까지 기다린다. */
 const settle = () => new Promise((res) => setTimeout(res, 60));
 
-test('홈은 요약과 메뉴 네 개를 보여준다', async () => {
+test('홈은 요약과 메뉴를 보여준다', async () => {
   const { shown, restore } = await atHome();
   try {
     const last = shown.at(-1)!;
-    assert.deepEqual(last.items, ['에이전트', '알림 보기', '체크 보기', '설정']);
+    assert.deepEqual(last.items, ['에이전트', '알림 보기', '체크 보기', '시스템', '명령', '설정']);
     // 상단 한 줄에 세션·알림·체크가 모두 있어야 한다.
     assert.match(last.header, /세션 .*알림 .*체크/);
   } finally {
@@ -259,7 +272,7 @@ test('체크 보기는 전역 목록을 연다', async () => {
 test('설정에서 음성·로고·화면 꺼짐 시간을 바꾼다', async () => {
   const { r, shown, fire, restore } = await atHome();
   try {
-    fire('tap', 3); // 설정
+    fire('tap', menuIndex(shown, '설정'));
     await settle();
     assert.equal(r.screen, 'settings');
 
@@ -294,7 +307,7 @@ test('설정에서 DEV 로고를 끄면 옆 패널이 사라진다', async () =>
     // 켜져 있을 때는 로고가 보인다.
     assert.equal(shown.at(-1)!.side!.length, 6);
 
-    fire('tap', 3); // 설정
+    fire('tap', menuIndex(shown, '설정'));
     await settle();
     fire('tap', 1); // DEV 로고 토글
     await settle();
@@ -306,7 +319,7 @@ test('설정에서 DEV 로고를 끄면 옆 패널이 사라진다', async () =>
     assert.ok(!shown.at(-1)!.side, '로고를 끄면 옆 패널이 없어야 한다');
 
     // 다시 켜면 돌아온다.
-    fire('tap', 3);
+    fire('tap', menuIndex(shown, '설정'));
     await settle();
     fire('tap', 1);
     await settle();
@@ -319,11 +332,14 @@ test('설정에서 DEV 로고를 끄면 옆 패널이 사라진다', async () =>
 });
 
 test('커서는 목록 끝을 넘지 않는다', async () => {
-  const { r, fire, restore } = await atHome();
+  const { r, shown, fire, restore } = await atHome();
   try {
+    // 메뉴 개수는 화면에서 센다. 숫자를 박으면 메뉴가 늘 때 깨진다.
+    const last = shown.at(-1)!.items.length - 1;
+
     for (let i = 0; i < 10; i++) fire('down');
     await settle();
-    assert.equal(r.menuCursor, 3, '메뉴는 네 칸뿐이다');
+    assert.equal(r.menuCursor, last, '커서가 메뉴 밖으로 나갔다');
 
     for (let i = 0; i < 10; i++) fire('up');
     await settle();

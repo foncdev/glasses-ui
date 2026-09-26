@@ -1275,7 +1275,10 @@ export class GlassesUI {
         await this.render();
         return;
       }
-      // 최상위라 더블탭으로 갈 곳이 없다.
+      // 최상위라 더블탭으로 갈 곳이 없다. 대신 화면을 바로 끈다.
+      // 무조작 타이머를 기다리지 않고 끄고 싶을 때 쓴다. 다시 켜는 건
+      // 여느 때처럼 아무 조작 한 번이다.
+      if (gesture === 'doubleTap') return this.sleep();
       if (gesture === 'tap') await this.openMenu(MENU[this.menuCursor]?.screen);
       return;
     }

@@ -196,6 +196,25 @@ test('더블탭은 한 단계씩 위로 올라간다', async () => {
   }
 });
 
+test('홈에서 더블탭하면 화면이 바로 꺼지고, 다음 조작은 켜기만 한다', async () => {
+  const { r, shown, texts, fire, restore } = await atHome();
+  try {
+    fire('doubleTap');
+    await settle();
+    assert.equal(r.screenOff, true, '무조작 타이머를 기다리지 않고 꺼진다');
+    assert.equal(texts.at(-1), ' ', '공백 한 칸으로 화면을 비운다');
+
+    const before = shown.length;
+    fire('tap', 0);
+    await settle();
+    assert.equal(r.screenOff, false);
+    assert.equal(r.screen, 'home', '켜는 탭이 메뉴를 고르지 않는다');
+    assert.equal(shown.length, before + 1, '홈을 다시 그린다');
+  } finally {
+    restore();
+  }
+});
+
 test('알림 보기 > 목록 > 내용', async () => {
   const { r, shown, texts, fire, restore } = await atHome();
   try {

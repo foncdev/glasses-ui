@@ -25,6 +25,7 @@ import {
   type Item,
   type ItemState,
   type ChecklistView,
+  type SystemView,
   type HistoryView,
   type HomeView,
   type LineKind,
@@ -458,6 +459,10 @@ export class GlassesUI {
   /** 맥의 지금 상태. 시스템 화면에서 쓴다. */
   private sys?: SysSummary;
   private procs: SysProc[] = [];
+  /** 시스템 상태를 마지막으로 읽은 시각. 스스로 갱신하지 않으므로 화면에 보인다. */
+  private sysReadAt?: Date;
+  /** 시스템 상태를 읽지 못한 까닭. 한 번이라도 읽었으면 비운다. */
+  private sysError?: string;
 
   /** 등록해 둔 명령. 안경에서는 골라 실행만 한다. */
   private snippets: Snippet[] = [];
@@ -889,6 +894,30 @@ export class GlassesUI {
     };
   }
 
+  /** 시스템 화면에 그릴 것. 못 구한 값(-1·0)은 null로 바꿔 넘긴다. */
+  private systemScreenView(): SystemView {
+    const sys = this.sys;
+    const at = this.sysReadAt;
+    // 탭해서 다시 읽어도 같은 분이면 달라진 게 없어 보인다. 초까지 적는다.
+    const read = at ? `읽음 ${clock(at)}:${String(at.getSeconds()).padStart(2, '0')}` : '';
+    return {
+      title: '$ ~/sys',
+      status: read || clock(),
+      summary: sys
+        ? {
+            cpu: sys.cpuPercent >= 0 ? sys.cpuPercent : null,
+            mem: sys.memTotalGB > 0 ? { used: sys.memUsedGB, total: sys.memTotalGB } : null,
+            load: sys.load,
+            uptime: sys.uptime,
+          }
+        : undefined,
+      procs: this.procs.map((p) => ({ name: p.name, cpu: p.cpu >= 0 ? p.cpu : null })),
+      notice: sys ? undefined : this.sysError ?? '읽는 중…',
+      hint: '● 새로 읽기    ●● 뒤로',
+      note: (sys?.host ?? '').replace(/\.local$/, ''),
+    };
+  }
+
   /** 세션 상태를 사람 말로. 상태 표시줄과 카드에 쓴다. */
   private sessionStateLabel(s: SessionInfo | undefined): string {
     if (s && !s.live) return '종료됨';
@@ -1253,6 +1282,10 @@ export class GlassesUI {
 
       // 8) 시스템 상태.
       if (this.screen === 'system') {
+        if (this.glasses.showSystem) {
+          await this.glasses.showSystem(this.systemScreenView());
+          return;
+        }
         const view = systemView(this.sys, this.procs);
         await this.glasses.showList(view.header, view.items);
         return;
@@ -1690,7 +1723,10 @@ export class GlassesUI {
 
     if (sys.status === 'fulfilled') {
       this.sys = sys.value;
+      this.sysReadAt = new Date();
+      this.sysError = undefined;
     } else {
+      this.sysError = '시스템 상태를 읽지 못했습니다';
       this.log(`시스템 상태를 읽지 못했습니다: ${sys.reason}`, 'warn');
     }
     this.procs = procs.status === 'fulfilled' ? procs.value : [];
@@ -1771,6 +1807,7 @@ export class GlassesUI {
     if (this.glasses.showHome) {
       try {
         this.sys = await agentCli.sysSummary();
+        this.sysReadAt = new Date();
       } catch {
         // 시스템 상태는 꾸밈이다. 못 읽어도 홈은 그린다.
       }

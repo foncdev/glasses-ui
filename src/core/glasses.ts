@@ -204,6 +204,32 @@ export interface ChecklistView {
   note: string;
 }
 
+/**
+ * 시스템 화면(showSystem). 고르는 목록이 아니라 한눈에 보는 계기판이다.
+ *
+ * 못 구한 값은 null로 둔다. -1이나 0을 그대로 보여주면 오해한다.
+ */
+export interface SystemView {
+  title: string;
+  /** 언제 읽었는지. 스스로 갱신하지 않으므로 값이 얼마나 오래됐는지 알려야 한다. */
+  status: string;
+  /** 못 읽었으면 없다. 그때는 notice를 띄운다. */
+  summary?: {
+    /** 0~100 */
+    cpu: number | null;
+    mem: { used: number; total: number } | null;
+    load: readonly number[];
+    uptime: string;
+  };
+  /** CPU를 많이 쓰는 순서. */
+  procs: ReadonlyArray<{ name: string; cpu: number | null }>;
+  /** 읽는 중이거나 못 읽었을 때 알려 줄 말. */
+  notice?: string;
+  hint: string;
+  /** 안내 줄 오른쪽. 호스트 이름. */
+  note: string;
+}
+
 /** 세션 화면에 그릴 것. 어떻게 그릴지는 어댑터가 정한다(showSessions). */
 export interface SessionsView {
   /** 상태 표시줄 왼쪽. */
@@ -282,6 +308,9 @@ export interface GlassesAdapter {
 
   /** 할 일 화면을 꾸며 그린다. 없으면 본체가 목록으로 그린다. */
   showChecklist?(view: ChecklistView): Promise<void>;
+
+  /** 시스템 화면을 꾸며 그린다. 없으면 본체가 showList로 그린다. */
+  showSystem?(view: SystemView): Promise<void>;
 
   /** 제스처를 구독한다. 반환값을 호출하면 끊는다. */
   onGesture(handler: (event: GestureEvent) => void): () => void;

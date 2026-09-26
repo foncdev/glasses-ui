@@ -18,6 +18,7 @@ import {
   type ItemLike,
   type ItemState,
   type ChecklistView,
+  type SystemView,
   type HistoryView,
   type HomeView,
   type LiveView,
@@ -236,6 +237,10 @@ export class G2Adapter implements GlassesAdapter {
 
   async showChecklist(view: ChecklistView): Promise<void> {
     await this.display.showChecklist(view);
+  }
+
+  async showSystem(view: SystemView): Promise<void> {
+    await this.display.showSystem(view);
   }
 
   onGesture(handler: (event: GestureEvent) => void): () => void {

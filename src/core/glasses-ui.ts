@@ -24,6 +24,7 @@ import {
   type GlassesAdapter,
   type Item,
   type ItemState,
+  type HomeView,
 } from './glasses.js';
 
 /**
@@ -666,6 +667,61 @@ export class GlassesUI {
    * 안경 화면은 좁아 헤더 한 줄이 전부다. 세 가지를 한 줄에 넣는다.
    *   세션 (진행중/전체) · 알림 (안읽음) · 체크 (완료/전체)
    */
+  /**
+   * 홈 화면에 그릴 것.
+   *
+   * 값을 두 갈래로 나눈다. 메뉴 오른쪽 숫자가 바뀌면 목록을 다시 세워
+   * 선택이 첫 항목으로 돌아가므로, 거기에는 드물게 바뀌는 것만 둔다
+   * (세션 수·안 읽은 알림·할 일). 작업 중 수·시각·연결처럼 수시로 바뀌는
+   * 것은 상태 표시줄에, CPU·메모리는 게이지에 둔다. 이 둘은 제자리에서
+   * 글자만 고친다.
+   */
+  private homeView(): HomeView {
+    const busy = this.sessions.filter((s) => s.live && s.status === 'busy').length;
+    const done = this.checklist.filter((i) => i.done).length;
+    const meta: Record<string, string> = {
+      sessions: this.sessions.length > 0 ? String(this.sessions.length) : '',
+      notifications: this.unread > 0 ? `${this.unread} new` : '',
+      checklist: this.checklist.length > 0 ? `${done} / ${this.checklist.length}` : '',
+      commands: this.snippets.length > 0 ? String(this.snippets.length) : '',
+    };
+
+    const now = new Date();
+    const clock = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const status = [
+      busy > 0 ? `작업 ${busy}` : '',
+      this.sseDown ? '○ offline' : '● online',
+      clock,
+    ]
+      .filter(Boolean)
+      .join('  ');
+
+    const sys = this.sys;
+    const gauges =
+      sys && sys.cpuPercent >= 0
+        ? [
+            { label: 'cpu', ratio: sys.cpuPercent / 100, text: `${Math.round(sys.cpuPercent)}%` },
+            ...(sys.memTotalGB > 0
+              ? [
+                  {
+                    label: 'mem',
+                    ratio: sys.memUsedGB / sys.memTotalGB,
+                    text: `${Math.round((sys.memUsedGB / sys.memTotalGB) * 100)}%`,
+                  },
+                ]
+              : []),
+          ]
+        : undefined;
+
+    return {
+      title: '$ relay ~/home',
+      status,
+      items: MENU.map((m) => ({ label: m.label, meta: meta[m.screen] ?? '' })),
+      logo: this.showLogo ? this.glasses.logo : undefined,
+      gauges,
+    };
+  }
+
   private summary(): string {
     const busy = this.sessions.filter((s) => s.live && s.status === 'busy').length;
     const done = this.checklist.filter((i) => i.done).length;
@@ -853,6 +909,11 @@ export class GlassesUI {
 
       // 4) 홈. 상단에 요약, 메뉴 옆에 서버 상태를 띄운다.
       if (this.screen === 'home') {
+        // 꾸밀 수 있는 기기는 상태 표시줄·게이지까지 그린다.
+        if (this.glasses.showHome) {
+          await this.glasses.showHome(this.homeView());
+          return;
+        }
         // 옆 패널은 로고만 둔다. 서버 상태는 상단 요약과 폰 로그에 이미 있고,
         // 여기 같이 넣으면 높이가 모자라 아래가 잘린다.
         // 로고를 끄면 패널 없이 목록이 화면을 다 쓴다.
@@ -1376,6 +1437,14 @@ export class GlassesUI {
       await this.refresh();
     } catch {
       // agent-cli가 꺼져 있으면 세션은 0으로 남는다.
+    }
+    // 홈 게이지용. terminal-agent가 없으면 게이지 없이 그린다.
+    if (this.glasses.showHome) {
+      try {
+        this.sys = await agentCli.sysSummary();
+      } catch {
+        // 시스템 상태는 꾸밈이다. 못 읽어도 홈은 그린다.
+      }
     }
     await this.render();
   }

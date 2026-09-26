@@ -17,6 +17,7 @@ import {
   type GlassesAdapter,
   type ItemLike,
   type ItemState,
+  type HomeView,
 } from '../core/glasses.js';
 import { G2Display } from './g2-display.js';
 import { GLASSES_LOGO } from './g2-logo.js';
@@ -168,6 +169,10 @@ export class G2Adapter implements GlassesAdapter {
     const cols = side?.length ? Math.floor(this.caps.cols! / 2) : this.caps.cols!;
     // 옆 패널은 로고 같은 장식이라 상태 마크를 붙이지 않는다.
     await this.display.showList(header, marksFor(items, cols), side?.map((s) => toItem(s).text));
+  }
+
+  async showHome(view: HomeView): Promise<void> {
+    await this.display.showHome(view);
   }
 
   onGesture(handler: (event: GestureEvent) => void): () => void {

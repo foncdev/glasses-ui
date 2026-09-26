@@ -85,6 +85,25 @@ export interface Caps {
 }
 
 /** 안경 한 대를 다루는 어댑터. */
+/** 홈 화면에 그릴 것. 어떻게 그릴지는 어댑터가 정한다(showHome). */
+export interface HomeView {
+  /** 상태 표시줄 왼쪽. 화면 이름 같은 고정 문구. */
+  title: string;
+  /**
+   * 상태 표시줄 오른쪽. 연결 상태·시각·작업 중 수처럼 자주 바뀌는 값.
+   *
+   * 자주 바뀌는 값은 메뉴가 아니라 여기 둔다. 메뉴 글자가 바뀌면 목록을
+   * 다시 세워야 하고, 그러면 선택이 첫 항목으로 돌아간다.
+   */
+  status: string;
+  /** 메뉴. meta는 오른쪽에 붙는 짧은 값이며 드물게 바뀌는 것만 넣는다. */
+  items: ReadonlyArray<{ label: string; meta?: string }>;
+  /** 로고. 없으면 로고 자리를 비운다. */
+  logo?: readonly string[];
+  /** 게이지. ratio는 0~1. 없으면 게이지 줄을 그리지 않는다. */
+  gauges?: ReadonlyArray<{ label: string; ratio: number; text: string }>;
+}
+
 export interface GlassesAdapter {
   /** 사람이 읽을 기기 이름. 로그와 화면에 쓴다. */
   readonly name: string;
@@ -120,6 +139,14 @@ export interface GlassesAdapter {
     items: readonly ItemLike[],
     side?: readonly ItemLike[],
   ): Promise<void>;
+
+  /**
+   * 홈 화면을 기기에 맞게 꾸며 그린다. 없으면 본체가 showList로 그린다.
+   *
+   * 목록 하나로는 밝기·영역·게이지를 줄 수 없어 따로 둔다. 무엇을 얼마나
+   * 꾸밀지는 기기 화면을 아는 어댑터가 정한다.
+   */
+  showHome?(view: HomeView): Promise<void>;
 
   /** 제스처를 구독한다. 반환값을 호출하면 끊는다. */
   onGesture(handler: (event: GestureEvent) => void): () => void;

@@ -6,7 +6,8 @@
  * 같은 화면에서 내용만 바뀔 때는 textContainerUpgrade를 쓴다.
  */
 
-import { clamp } from '../core/glasses.js';
+import { clamp, type HomeView } from '../core/glasses.js';
+import { layoutHome, type Box } from './g2-home.js';
 import {
   CreateStartUpPageContainer,
   ListContainerProperty,
@@ -25,6 +26,13 @@ const LIST_ID = 2;
 const LIST_NAME = 'list';
 const SIDE_ID = 3;
 const SIDE_NAME = 'side';
+// 홈 화면에만 있는 칸. 목록·옆 패널과 번호가 겹치지 않게 뒤에 둔다.
+const STATUS_ID = 4;
+const STATUS_NAME = 'status';
+const DIVIDER_ID = 5;
+const DIVIDER_NAME = 'divider';
+const STATS_ID = 6;
+const STATS_NAME = 'stats';
 
 /** 화면 크기. 옆 패널을 붙일 때 목록 폭을 여기서 나눈다. */
 const SCREEN_W = 576;
@@ -57,7 +65,15 @@ export class G2Display {
    * 다시 세워야(rebuild) 한다. 이 구분이 없으면 갱신이 조용히 실패해
    * 화면이 영영 안 바뀐다.
    */
-  private mode: 'text' | 'list' | 'none' = 'text';
+  private mode: 'text' | 'list' | 'home' | 'none' = 'text';
+  /**
+   * 지금 세워둔 홈의 구조. 목록 글자·로고·게이지 줄 수가 같으면 다시
+   * 세우지 않고, 바뀐 글자 칸만 고친다. 목록을 다시 세우면 선택이 첫
+   * 항목으로 돌아가기 때문이다(listKey와 같은 이유).
+   */
+  private homeKey = '';
+  /** 홈의 글자 칸별 지금 내용. 바뀐 칸만 고치는 데 쓴다. */
+  private homeTexts = new Map<number, string>();
   /** 브리지 호출을 직렬화한다. 동시 호출은 연결을 끊을 수 있다. */
   private queue: Promise<unknown> = Promise.resolve();
   /**
@@ -295,6 +311,120 @@ export class G2Display {
       this.mode = 'list';
       this.listKey = key;
       this.listHeader = headerText;
+    });
+  }
+
+  /**
+   * 꾸민 홈 화면. 배치는 g2-home.ts가 정한다.
+   *
+   * 상태 표시줄·게이지처럼 자주 바뀌는 칸은 글자만 고치고, 목록 글자나
+   * 구조가 바뀔 때만 다시 세운다.
+   */
+  async showHome(view: HomeView): Promise<void> {
+    const bridge = this.bridge;
+    if (!bridge) return;
+    const layout = layoutHome(view);
+
+    const key = JSON.stringify([
+      layout.list.items,
+      layout.card?.text ?? null,
+      layout.stats ? layout.stats.h : null,
+    ]);
+    const texts = new Map<number, [string, string]>([
+      [MAIN_ID, [MAIN_NAME, layout.statusLeft.text]],
+      [STATUS_ID, [STATUS_NAME, layout.statusRight.text]],
+    ]);
+    if (layout.stats) texts.set(STATS_ID, [STATS_NAME, layout.stats.text]);
+
+    await this.enqueue(async () => {
+      if (this.mode === 'home' && this.homeKey === key) {
+        let ok = true;
+        for (const [id, [name, text]] of texts) {
+          if (this.homeTexts.get(id) === text) continue;
+          const done = await withTimeout(
+            bridge.textContainerUpgrade(
+              new TextContainerUpgrade({
+                containerID: id,
+                containerName: name,
+                contentOffset: 0,
+                contentLength: 0,
+                content: text,
+              }),
+            ),
+            6000,
+            '홈 갱신',
+          ).catch(() => false);
+          if (!done) {
+            ok = false;
+            break;
+          }
+          this.homeTexts.set(id, text);
+        }
+        if (ok) return;
+        // 고치지 못했으면 아래에서 통째로 다시 세운다.
+      }
+
+      this.homeKey = '';
+      const textBox = (id: number, name: string, b: Box, content: string) =>
+        new TextContainerProperty({
+          xPosition: b.x,
+          yPosition: b.y,
+          width: b.w,
+          height: b.h,
+          paddingLength: b.padding,
+          borderWidth: b.border?.width ?? 0,
+          borderColor: b.border?.color ?? 0,
+          ...(b.border?.radius ? { borderRadius: b.border.radius } : {}),
+          ...(b.brightness !== undefined ? { textColor: b.brightness } : {}),
+          containerID: id,
+          containerName: name,
+          content,
+          isEventCapture: 0,
+        });
+
+      const textObject = [
+        textBox(MAIN_ID, MAIN_NAME, layout.statusLeft, layout.statusLeft.text),
+        textBox(STATUS_ID, STATUS_NAME, layout.statusRight, layout.statusRight.text),
+        // 빈 글은 기기가 거부할 수 있어 공백 한 칸을 넣는다.
+        textBox(DIVIDER_ID, DIVIDER_NAME, layout.divider, ' '),
+      ];
+      if (layout.card) textObject.push(textBox(SIDE_ID, SIDE_NAME, layout.card, layout.card.text));
+      if (layout.stats) textObject.push(textBox(STATS_ID, STATS_NAME, layout.stats, layout.stats.text));
+
+      const l = layout.list;
+      const list = new ListContainerProperty({
+        xPosition: l.x,
+        yPosition: l.y,
+        width: l.w,
+        height: l.h,
+        borderWidth: 0,
+        borderColor: 0,
+        paddingLength: l.padding,
+        containerID: LIST_ID,
+        containerName: LIST_NAME,
+        isEventCapture: 1,
+        itemContainer: new ListItemContainerProperty({
+          itemCount: l.items.length,
+          itemWidth: 0,
+          isItemSelectBorderEn: 1,
+          itemName: l.items,
+        }),
+      });
+
+      await withTimeout(
+        bridge.rebuildPageContainer(
+          new RebuildPageContainer({
+            containerTotalNum: textObject.length + 1,
+            textObject,
+            listObject: [list],
+          }),
+        ),
+        8000,
+        '홈 표시',
+      );
+      this.mode = 'home';
+      this.homeKey = key;
+      this.homeTexts = new Map([...texts].map(([id, [, text]]) => [id, text]));
     });
   }
 

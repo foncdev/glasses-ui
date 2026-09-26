@@ -18,5 +18,8 @@
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@evenrealities/pretext": "^0.1.4"
+  }
 }

@@ -24,6 +24,7 @@ import {
   type GlassesAdapter,
   type Item,
   type ItemState,
+  type ChecklistView,
   type HistoryView,
   type HomeView,
   type LineKind,
@@ -870,6 +871,24 @@ export class GlassesUI {
     };
   }
 
+  /**
+   * 할 일 화면에 그릴 것. 목록 끝의 '완료 항목 치우기' 줄은 예전과 같은
+   * 자리(마지막)에 둔다. 탭 처리가 그 자리를 동작으로 읽는다.
+   */
+  private checklistView(): ChecklistView {
+    const done = this.checklist.filter((i) => i.done).length;
+    const s = this.sessions.find((x) => x.id === this.activeId);
+    return {
+      title: this.checkGlobal ? '$ ~/todo' : `$ ~/${s?.title || '새 대화'}/todo`,
+      status: [`${done} / ${this.checklist.length}`, clock()].join('   '),
+      items: this.checklist.map((i) => ({ done: i.done, text: i.text })),
+      action: this.checklist.length > 0 ? '완료 항목 치우기' : undefined,
+      progress: { done, total: this.checklist.length },
+      hint: '● 체크    ●● 뒤로',
+      note: '폰·웹에서 추가',
+    };
+  }
+
   /** 세션 상태를 사람 말로. 상태 표시줄과 카드에 쓴다. */
   private sessionStateLabel(s: SessionInfo | undefined): string {
     if (s && !s.live) return '종료됨';
@@ -1280,6 +1299,10 @@ export class GlassesUI {
 
       // 9) 체크리스트 화면.
       if (this.screen === 'checklist') {
+        if (this.glasses.showChecklist) {
+          await this.glasses.showChecklist(this.checklistView());
+          return;
+        }
         const done = this.checklist.filter((i) => i.done).length;
         const items: Item[] = this.checklist.map((i) => ({
           text: i.text,
@@ -1634,6 +1657,11 @@ export class GlassesUI {
 
     // 알림 화면을 보고 있으면 목록으로 이미 보인다.
     if (this.screen === 'notifications') return;
+
+    // 할 일 화면에서 할 일이 바뀐 알림은 띄우지 않는다. 서버가 할 일
+    // 변경마다 알림을 남기는데, 안경에서 체크하면 방금 한 일이 팝업으로
+    // 떠서 체크한 목록을 덮었다. 목록에 이미 보이는 변화다.
+    if (this.screen === 'checklist' && /^(완료한 )?할 일/.test(newest.title)) return;
 
     this.wake();
     this.glasses.speak(newest.title);

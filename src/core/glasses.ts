@@ -190,6 +190,20 @@ export interface PermissionView {
   hint: string;
 }
 
+/** 할 일 화면(showChecklist). 전역 목록과 세션 목록이 같이 쓴다. */
+export interface ChecklistView {
+  title: string;
+  /** 완료 수와 시각. */
+  status: string;
+  items: ReadonlyArray<{ done: boolean; text: string }>;
+  /** 목록 끝에 붙는 동작 줄(완료 항목 치우기). 할 일이 없으면 없다. */
+  action?: string;
+  progress: { done: number; total: number };
+  hint: string;
+  /** 안내 줄 오른쪽. 어디서 추가하는지. */
+  note: string;
+}
+
 /** 세션 화면에 그릴 것. 어떻게 그릴지는 어댑터가 정한다(showSessions). */
 export interface SessionsView {
   /** 상태 표시줄 왼쪽. */
@@ -265,6 +279,9 @@ export interface GlassesAdapter {
   showHistory?(view: HistoryView): Promise<void>;
   showLive?(view: LiveView): Promise<void>;
   showPermission?(view: PermissionView): Promise<void>;
+
+  /** 할 일 화면을 꾸며 그린다. 없으면 본체가 목록으로 그린다. */
+  showChecklist?(view: ChecklistView): Promise<void>;
 
   /** 제스처를 구독한다. 반환값을 호출하면 끊는다. */
   onGesture(handler: (event: GestureEvent) => void): () => void;

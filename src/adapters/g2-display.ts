@@ -8,6 +8,7 @@
 
 import {
   clamp,
+  type ChecklistView,
   type HistoryView,
   type HomeView,
   type LiveView,
@@ -22,6 +23,7 @@ import { layoutHome, type Box } from './g2-home.js';
 import { layoutNotice, layoutNotification, layoutNotifications } from './g2-inbox.js';
 import { layoutSessions } from './g2-sessions.js';
 import { layoutHistory, layoutLive, layoutPermission } from './g2-talk.js';
+import { layoutChecklist } from './g2-todo.js';
 import {
   CreateStartUpPageContainer,
   ListContainerProperty,
@@ -61,7 +63,8 @@ type RichKind =
   | 'notice'
   | 'history'
   | 'live'
-  | 'permission';
+  | 'permission'
+  | 'checklist';
 
 /** 꾸민 화면의 글자 칸 하나. live면 자리가 그대로일 때 글자만 고친다. */
 interface RichText {
@@ -451,6 +454,22 @@ export class G2Display {
       { id: SIDE_ID, name: SIDE_NAME, box: l.activity, text: l.activity.text, live: true },
       { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
     ]);
+  }
+
+  /** 꾸민 할 일 화면. 할 일이 없으면 안내 카드가 조작을 받는다. */
+  async showChecklist(view: ChecklistView): Promise<void> {
+    const l = layoutChecklist(view);
+    await this.showRich(
+      'checklist',
+      [
+        { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+        { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+        { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+        { id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text, live: !l.card.capture, capture: l.card.capture },
+        { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
+      ],
+      l.list ? { box: l.list, items: l.list.items } : undefined,
+    );
   }
 
   /** 꾸민 권한 요청. 선택지 목록이 조작을 받는다. */

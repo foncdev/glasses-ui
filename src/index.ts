@@ -18,7 +18,7 @@ export {
   type SessionEvent,
   type SessionInfo,
 } from './core/agent-cli.js';
-export { clamp, type Gesture, type GestureEvent, type GlassesAdapter, type HistoryView, type HomeView, type LiveView, type NoticeView, type PermissionView, type NotificationView, type NotificationsView, type SessionsView } from './core/glasses.js';
+export { clamp, type Gesture, type GestureEvent, type GlassesAdapter, type ChecklistView, type HistoryView, type HomeView, type LiveView, type NoticeView, type PermissionView, type NotificationView, type NotificationsView, type SessionsView } from './core/glasses.js';
 
 // 기본 제공 어댑터
 export { G2Adapter } from './adapters/g2.js';

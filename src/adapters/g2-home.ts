@@ -18,26 +18,53 @@
  */
 import { getTextWidth, pxTruncate } from '@evenrealities/pretext';
 import type { HomeView } from '../core/glasses.js';
+import { ITEM_MAX_BYTES, utf8Bytes } from './g2-bytes.js';
 
-const SCREEN_W = 576;
+export const SCREEN_W = 576;
 const SPACE = getTextWidth(' ');
+/**
+ * 넓은 공백(U+3000, 20px·3바이트). 보통 공백은 5px·1바이트라, 같은 폭을
+ * 채우는 데 바이트가 더 든다. 목록 한 칸은 63바이트뿐이라 넓은 공백부터 쓴다.
+ */
+const WIDE = '\u3000';
+const WIDE_W = getTextWidth(WIDE);
+
+/** gap(px)을 넓은 공백과 보통 공백으로 채운다. */
+function fill(gap: number): string {
+  const wide = Math.max(0, Math.floor(gap / WIDE_W));
+  return WIDE.repeat(wide) + ' '.repeat(Math.max(1, Math.floor((gap - wide * WIDE_W) / SPACE)));
+}
 
 /** 이 폭(px)에 맞춰 왼쪽 글과 오른쪽 글 사이를 공백으로 채운다. */
 export function spread(left: string, right: string, width: number): string {
   if (!right) return pxTruncate(left, width);
-  const r = pxTruncate(right, Math.floor(width / 3));
+  const r = pxTruncate(right, Math.floor(width / 2.5));
   const l = pxTruncate(left, width - getTextWidth(r) - SPACE);
   // 이어 붙이면 사이 커닝으로 1~2px이 더 나온다. 딱 맞추면 접히므로 여유를 둔다.
-  const gap = width - getTextWidth(l) - getTextWidth(r) - 3;
-  return l + ' '.repeat(Math.max(1, Math.floor(gap / SPACE))) + r;
+  return l + fill(width - getTextWidth(l) - getTextWidth(r) - 3) + r;
 }
 
-function alignRight(text: string, width: number): string {
+/**
+ * 목록 한 칸용 spread. 63바이트를 넘으면 왼쪽 글을 줄여 맞춘다.
+ *
+ * 한글 제목은 한 글자 3바이트라, 긴 제목에 오른쪽 정렬 공백까지 넣으면
+ * 한도를 넘는다. 넘치면 목록 전체가 그려지지 않는다(g2-bytes 참고).
+ */
+export function spreadItem(left: string, right: string, width: number): string {
+  let w = width;
+  for (;;) {
+    const row = spread(pxTruncate(left, w), right, width);
+    if (utf8Bytes(row) <= ITEM_MAX_BYTES || w <= 20) return row;
+    w -= 10;
+  }
+}
+
+export function alignRight(text: string, width: number): string {
   const t = pxTruncate(text, width);
   return ' '.repeat(Math.max(0, Math.floor((width - getTextWidth(t)) / SPACE))) + t;
 }
 
-function center(text: string, width: number): string {
+export function center(text: string, width: number): string {
   return ' '.repeat(Math.max(0, Math.floor((width - getTextWidth(text)) / 2 / SPACE))) + text;
 }
 
@@ -90,7 +117,7 @@ export function layoutHome(view: HomeView): HomeLayout {
     divider: { x: 6, y: 33, w: SCREEN_W - 12, h: 2, padding: 0, border: { width: 1, color: 5 } },
     list: {
       x: 0, y: 38, w: listW, h: 248, padding: listPad,
-      items: view.items.map((i) => spread(i.label, i.meta ?? '', itemTextW)),
+      items: view.items.map((i) => spreadItem(i.label, i.meta ?? '', itemTextW)),
     },
   };
 

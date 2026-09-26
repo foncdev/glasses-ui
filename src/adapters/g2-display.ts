@@ -7,6 +7,7 @@
  */
 
 import { clamp, type HomeView } from '../core/glasses.js';
+import { fitBytes } from './g2-bytes.js';
 import { layoutHome, type Box } from './g2-home.js';
 import {
   CreateStartUpPageContainer,
@@ -206,8 +207,8 @@ export class G2Display {
     const bridge = this.bridge;
     if (!bridge) return;
 
-    // 리스트는 최대 20개, 항목당 64자다.
-    const names = items.slice(0, 20).map((s) => clamp(s.replace(/\n/g, ' '), 64));
+    // 리스트는 최대 20개, 항목당 63바이트다(64자가 아니다). g2-bytes 참고.
+    const names = items.slice(0, 20).map((s) => fitBytes(clamp(s.replace(/\n/g, ' '), 64)));
     if (names.length === 0) names.push('(비어 있음)');
 
     const key = JSON.stringify([names, side ?? []]);
@@ -407,7 +408,8 @@ export class G2Display {
           itemCount: l.items.length,
           itemWidth: 0,
           isItemSelectBorderEn: 1,
-          itemName: l.items,
+          // 배치가 이미 바이트를 맞추지만, 넘치면 화면이 멈추므로 한 번 더 막는다.
+          itemName: l.items.map((i) => fitBytes(i)),
         }),
       });
 

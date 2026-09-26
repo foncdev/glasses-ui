@@ -156,10 +156,11 @@ export class AgentCliClient {
     return token;
   }
 
-  async setup(username: string, password: string): Promise<string> {
+  /** code는 relay-service 시작 로그에 찍힌 설정 코드다. 없으면 서버가 403으로 거절한다. */
+  async setup(username: string, password: string, code: string): Promise<string> {
     const { token } = await this.request<{ token: string }>('/auth/setup', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, code }),
     });
     return token;
   }

@@ -102,7 +102,12 @@ export interface AuthStatus {
   username: string;
 }
 
-export class AgentCliError extends Error {}
+export class AgentCliError extends Error {
+  /** HTTP 상태. 401이면 로그인이 풀린 것이다. 접속 실패처럼 응답이 없으면 없다. */
+  constructor(message: string, readonly status?: number) {
+    super(message);
+  }
+}
 
 function normalizeBaseUrl(raw: string): string {
   let url = raw.trim();
@@ -182,8 +187,13 @@ export class AgentCliClient {
 
     if (!res.ok) {
       const err = (body as { error?: { message?: string } }).error;
-      if (res.status === 401) throw new AgentCliError('API 키가 맞지 않습니다.');
-      throw new AgentCliError(err?.message ?? `요청 실패 (${res.status})`);
+      // 401이면 서버 문구를 먼저 쓴다. 로그인 실패면 '아이디 또는 비밀번호가
+      // 올바르지 않습니다'가 온다. 예전에는 늘 'API 키가 맞지 않습니다'라
+      // 계정으로 로그인하는데 키를 물어보는 것처럼 보였다.
+      if (res.status === 401) {
+        throw new AgentCliError(err?.message ?? '로그인이 풀렸습니다. 다시 로그인하세요.', 401);
+      }
+      throw new AgentCliError(err?.message ?? `요청 실패 (${res.status})`, res.status);
     }
     return body as T;
   }

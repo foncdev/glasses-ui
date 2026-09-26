@@ -102,6 +102,9 @@ export interface AuthStatus {
   username: string;
 }
 
+/** 요청 하나를 기다리는 최대 시간. relay는 agent 중계에 30초를 두지만 폰 화면은 그보다 짧게 끊는다. */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 export class AgentCliError extends Error {
   /** HTTP 상태. 401이면 로그인이 풀린 것이다. 접속 실패처럼 응답이 없으면 없다. */
   constructor(message: string, readonly status?: number) {
@@ -187,6 +190,10 @@ export class AgentCliClient {
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
+        // 응답이 없으면 기다리지 않는다. 폰 화면의 연결 버튼이 요청이 끝날
+        // 때까지 꺼져 있어서, 서버가 멈추면 버튼도 몇 분씩 눌리지 않았다.
+        // 오래 걸리는 명령 실행(runSnippet)은 이 길을 타지 않는다.
+        signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         ...init,
         headers: {
           ...(init.body ? { 'Content-Type': 'application/json' } : {}),
@@ -198,7 +205,10 @@ export class AgentCliClient {
           ...init.headers,
         },
       });
-    } catch {
+    } catch (err) {
+      if ((err as Error).name === 'TimeoutError') {
+        throw new AgentCliError(`서버가 ${REQUEST_TIMEOUT_MS / 1000}초 안에 답하지 않습니다: ${this.baseUrl}`);
+      }
       // 네트워크 자체가 안 되면 원인을 구체적으로 알려준다.
       throw new AgentCliError(`접속 실패: ${this.baseUrl}\n같은 와이파이인지, agent-cli가 켜져 있는지 확인하세요.`);
     }

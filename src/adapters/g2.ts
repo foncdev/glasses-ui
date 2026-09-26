@@ -140,6 +140,29 @@ export function readLifecycle(event: EvenHubEvent): 'foreground' | 'background' 
   return null;
 }
 
+/**
+ * 브리지 저장소 호출을 오래 기다리지 않는다.
+ *
+ * 폰 화면의 연결 버튼은 접속이 끝날 때까지 꺼져 있는데, 저장된 토큰을
+ * 읽는 브리지 호출이 늦으면 그동안 버튼이 눌리지 않았다. 늦으면 브라우저
+ * 저장소로 넘어간다(saveSetting은 둘 다에 쓴다).
+ */
+const BRIDGE_STORAGE_MS = 1500;
+async function bridgeWithin<T>(p: Promise<T> | undefined, fallback: T): Promise<T> {
+  if (!p) return fallback;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p.catch(() => fallback),
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), BRIDGE_STORAGE_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class G2Adapter implements GlassesAdapter {
   readonly name = 'Even Realities G2';
 
@@ -272,11 +295,11 @@ export class G2Adapter implements GlassesAdapter {
     } catch {
       // 저장소가 막혀 있어도 브리지 쪽은 시도한다.
     }
-    await this.bridge?.setLocalStorage(key, value);
+    await bridgeWithin(this.bridge?.setLocalStorage(key, value), undefined);
   }
 
   async loadSetting(key: string): Promise<string> {
-    const fromBridge = (await this.bridge?.getLocalStorage(key)) ?? '';
+    const fromBridge = (await bridgeWithin(this.bridge?.getLocalStorage(key), '')) ?? '';
     if (fromBridge) return fromBridge;
     try {
       return localStorage.getItem(key) ?? '';

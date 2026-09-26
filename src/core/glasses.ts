@@ -104,6 +104,49 @@ export interface HomeView {
   gauges?: ReadonlyArray<{ label: string; ratio: number; text: string }>;
 }
 
+/** 알림 갈래. 서버의 Notification.kind와 같다. */
+export type NoticeKind = 'done' | 'error' | 'permission' | 'info';
+
+/** 알림 목록에 그릴 것(showNotifications). */
+export interface NotificationsView {
+  title: string;
+  /** 새 알림 수와 시각. */
+  status: string;
+  /** 알림 한 줄. read로 안 읽은 것을 가른다. meta는 경과 시간. */
+  rows: ReadonlyArray<{ kind: NoticeKind; read: boolean; title: string; meta: string }>;
+  /** 안 읽은 알림 수(갈래별). */
+  counts: ReadonlyArray<{ kind: NoticeKind; label: string; count: number }>;
+  unread: number;
+  /** 목록 끝에 붙는 동작 줄. 알림이 없으면 없다. */
+  action?: string;
+  hint: string;
+  /** 안내 줄 오른쪽. 기호 읽는 법 같은 것. */
+  legend: string;
+}
+
+/** 알림 하나의 내용(showNotification). */
+export interface NotificationView {
+  title: string;
+  status: string;
+  kind: NoticeKind;
+  /** 갈래 이름. 오류·완료 등. */
+  label: string;
+  heading: string;
+  body: string;
+  hint: string;
+}
+
+/** 새 알림 팝업(showNotice). */
+export interface NoticeView {
+  kind: NoticeKind;
+  /** 어디서 온 알림인지. 에이전트·할 일·오류 등. */
+  label: string;
+  title: string;
+  body: string;
+  /** 닫히는 때와 닫는 법. */
+  closeHint: string;
+}
+
 /** 세션 화면에 그릴 것. 어떻게 그릴지는 어댑터가 정한다(showSessions). */
 export interface SessionsView {
   /** 상태 표시줄 왼쪽. */
@@ -169,6 +212,11 @@ export interface GlassesAdapter {
 
   /** 세션 화면을 기기에 맞게 꾸며 그린다. 없으면 본체가 showList로 그린다. */
   showSessions?(view: SessionsView): Promise<void>;
+
+  /** 알림 목록·내용·새 알림 팝업을 꾸며 그린다. 없으면 본체가 목록·글로 그린다. */
+  showNotifications?(view: NotificationsView): Promise<void>;
+  showNotification?(view: NotificationView): Promise<void>;
+  showNotice?(view: NoticeView): Promise<void>;
 
   /** 제스처를 구독한다. 반환값을 호출하면 끊는다. */
   onGesture(handler: (event: GestureEvent) => void): () => void;

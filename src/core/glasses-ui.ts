@@ -25,6 +25,9 @@ import {
   type Item,
   type ItemState,
   type HomeView,
+  type NoticeKind,
+  type NotificationView,
+  type NotificationsView,
   type SessionsView,
 } from './glasses.js';
 
@@ -365,6 +368,8 @@ export class GlassesUI {
     text: string;
     /** 머리말에 붙는 갈래. 에이전트·할일·알림을 나눈다. */
     label: string;
+    /** 알림 갈래. 꾸민 팝업이 기호를 고르는 데 쓴다. */
+    kind?: NoticeKind;
   } | null = null;
   private activity = '';
   private tick = 0;
@@ -777,6 +782,54 @@ export class GlassesUI {
     };
   }
 
+  /**
+   * 알림 목록에 그릴 것.
+   *
+   * 목록 끝의 '모두 읽음 처리' 줄은 예전과 같은 자리(마지막)에 둔다.
+   * 탭 처리가 그 자리를 동작으로 읽는다.
+   */
+  private notificationsView(): NotificationsView {
+    const rows = this.notifications.map((n) => ({
+      kind: n.kind,
+      read: Boolean(n.readAt),
+      title: n.title,
+      meta: timeAgo(n.createdAt),
+    }));
+    const unreadOf = (k: NoticeKind) => rows.filter((r) => r.kind === k && !r.read).length;
+    return {
+      title: '$ relay ~/inbox',
+      status: [this.unread > 0 ? `● 새 ${this.unread}` : '', clock()].filter(Boolean).join('   '),
+      rows,
+      counts: [
+        { kind: 'error', label: '오류', count: unreadOf('error') },
+        { kind: 'permission', label: '권한', count: unreadOf('permission') },
+        { kind: 'done', label: '완료', count: unreadOf('done') },
+        { kind: 'info', label: '정보', count: unreadOf('info') },
+      ],
+      unread: this.unread,
+      action: rows.length > 0 ? '모두 읽음 처리' : undefined,
+      hint: '● 열기    ●● 뒤로',
+      legend: '채움 = 안 읽음',
+    };
+  }
+
+  /**
+   * 알림 하나의 내용. 대화 기록의 전문을 볼 때도 이 화면을 쓴다(id가 빈 알림).
+   */
+  private notificationView(n: Notification | null): NotificationView {
+    const kind: NoticeKind = n?.kind ?? 'info';
+    const ago = n?.createdAt ? timeAgo(n.createdAt) : '';
+    return {
+      title: n?.id ? '$ relay ~/inbox' : '$ relay ~/history',
+      status: [ago ? (ago === '방금' ? ago : `${ago} 전`) : '', clock()].filter(Boolean).join('   '),
+      kind,
+      label: { done: '완료', error: '오류', permission: '권한', info: '정보' }[kind],
+      heading: n?.title ?? '알림',
+      body: n?.body?.trim() || '(내용 없음)',
+      hint: '● 닫기    ●● 뒤로',
+    };
+  }
+
   private summary(): string {
     const busy = this.sessions.filter((s) => s.live && s.status === 'busy').length;
     const done = this.checklist.filter((i) => i.done).length;
@@ -873,7 +926,7 @@ export class GlassesUI {
    * 걷을 때 화면을 다시 그려 원래 보던 곳으로 돌아간다. 그리지 않으면
    * 팝업 글자가 화면에 그대로 남는다.
    */
-  private showNotice(notice: { title: string; text: string; label: string }): void {
+  private showNotice(notice: { title: string; text: string; label: string; kind?: NoticeKind }): void {
     this.notice = notice;
     clearTimeout(this.noticeTimer);
     this.noticeTimer = setTimeout(() => {
@@ -958,6 +1011,18 @@ export class GlassesUI {
 
       // 2) 작업 완료·새 알림.
       if (this.notice) {
+        if (this.glasses.showNotice) {
+          const n = this.notice;
+          await this.glasses.showNotice({
+            kind: n.kind ?? 'info',
+            // 글 화면에서는 '* 오류'처럼 별표를 붙였다. 꾸민 팝업은 기호를 따로 그린다.
+            label: n.label.replace(/^\*\s*/, ''),
+            title: n.title.trim(),
+            body: n.text.trim() === n.title.trim() ? '' : n.text.trim(),
+            closeHint: `${Math.round(this.noticeMs / 1000)}초 후 닫힘  ·  탭: 닫기`,
+          });
+          return;
+        }
         await this.glasses.showText(noticeView(this.notice, this.noticeMs));
         return;
       }
@@ -1013,6 +1078,10 @@ export class GlassesUI {
 
       // 6) 알림 목록.
       if (this.screen === 'notifications') {
+        if (this.glasses.showNotifications) {
+          await this.glasses.showNotifications(this.notificationsView());
+          return;
+        }
         const items: Item[] = this.notifications.map((n) => ({
           text: n.title,
           state: n.readAt ? 'read' : 'unread',
@@ -1029,6 +1098,10 @@ export class GlassesUI {
       // 7) 알림 하나를 펼쳐 본다.
       if (this.screen === 'notification') {
         const n = this.openNotif;
+        if (this.glasses.showNotification) {
+          await this.glasses.showNotification(this.notificationView(n));
+          return;
+        }
         await this.glasses.showText(
           [
             clamp(n?.title ?? '알림', 46),
@@ -1257,6 +1330,7 @@ export class GlassesUI {
           title: s?.title || '새 대화',
           text: failed ? `오류: ${result}` : result,
           label: '에이전트',
+          kind: failed ? 'error' : 'done',
         });
       }
       await this.render();
@@ -1405,6 +1479,7 @@ export class GlassesUI {
       // 웹에서 제목만 적어 보낼 때가 그렇다.
       text: newest.body.trim() === newest.title.trim() ? '' : newest.body,
       label: this.labelFor(newest),
+      kind: newest.kind,
     });
   }
 

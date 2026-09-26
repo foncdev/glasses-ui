@@ -6,9 +6,17 @@
  * 같은 화면에서 내용만 바뀔 때는 textContainerUpgrade를 쓴다.
  */
 
-import { clamp, type HomeView, type SessionsView } from '../core/glasses.js';
+import {
+  clamp,
+  type HomeView,
+  type NoticeView,
+  type NotificationView,
+  type NotificationsView,
+  type SessionsView,
+} from '../core/glasses.js';
 import { fitBytes } from './g2-bytes.js';
 import { layoutHome, type Box } from './g2-home.js';
+import { layoutNotice, layoutNotification, layoutNotifications } from './g2-inbox.js';
 import { layoutSessions } from './g2-sessions.js';
 import {
   CreateStartUpPageContainer,
@@ -35,8 +43,13 @@ const DIVIDER_ID = 5;
 const DIVIDER_NAME = 'divider';
 const STATS_ID = 6;
 const STATS_NAME = 'stats';
-// 세션 화면에서는 6번 칸이 아래 안내 줄이다.
+// 세션·알림 화면에서는 6번 칸이 아래 안내 줄이다.
 const FOOTER_NAME = 'footer';
+// 알림 내용·팝업의 본문. 목록이 없는 화면이라 이 칸이 조작을 받는다.
+const BODY_ID = 7;
+const BODY_NAME = 'body';
+
+type RichKind = 'home' | 'sessions' | 'notifications' | 'notification' | 'notice';
 
 /** 꾸민 화면의 글자 칸 하나. live면 자리가 그대로일 때 글자만 고친다. */
 interface RichText {
@@ -80,7 +93,7 @@ export class G2Display {
    * 다시 세워야(rebuild) 한다. 이 구분이 없으면 갱신이 조용히 실패해
    * 화면이 영영 안 바뀐다.
    */
-  private mode: 'text' | 'list' | 'home' | 'sessions' | 'none' = 'text';
+  private mode: 'text' | 'list' | RichKind | 'none' = 'text';
   /**
    * 지금 세워둔 꾸민 화면(홈·세션)의 구조. 목록 글자와 칸 구성이 같으면
    * 다시 세우지 않고, 바뀐 글자 칸만 고친다. 목록을 다시 세우면 선택이
@@ -357,6 +370,45 @@ export class G2Display {
     await this.showRich('sessions', texts, l.list ? { box: l.list, items: l.list.items } : undefined);
   }
 
+  /** 꾸민 알림 목록. 알림이 없으면 안내 카드가 조작을 받는다. */
+  async showNotifications(view: NotificationsView): Promise<void> {
+    const l = layoutNotifications(view);
+    await this.showRich(
+      'notifications',
+      [
+        { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+        { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+        { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+        { id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text, live: !l.card.capture, capture: l.card.capture },
+        { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
+      ],
+      l.list ? { box: l.list, items: l.list.items } : undefined,
+    );
+  }
+
+  /** 꾸민 알림 내용. 본문 칸이 조작을 받는다. */
+  async showNotification(view: NotificationView): Promise<void> {
+    const l = layoutNotification(view);
+    await this.showRich('notification', [
+      { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+      { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+      { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+      { id: SIDE_ID, name: SIDE_NAME, box: l.head, text: l.head.text },
+      { id: BODY_ID, name: BODY_NAME, box: l.body, text: l.body.text, capture: true },
+      { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text },
+    ]);
+  }
+
+  /** 새 알림 팝업. 가운데 카드 하나로 띄운다. 본문 칸이 조작(탭으로 닫기)을 받는다. */
+  async showNotice(view: NoticeView): Promise<void> {
+    const l = layoutNotice(view);
+    await this.showRich('notice', [
+      { id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text },
+      { id: BODY_ID, name: BODY_NAME, box: l.body, text: l.body.text, capture: true },
+      { id: STATS_ID, name: FOOTER_NAME, box: l.hint, text: l.hint.text },
+    ]);
+  }
+
   /**
    * 여러 칸으로 꾸민 화면을 그린다.
    *
@@ -365,7 +417,7 @@ export class G2Display {
    * 목록이 없으면 capture 칸이 조작을 받는다.
    */
   private async showRich(
-    kind: 'home' | 'sessions',
+    kind: RichKind,
     texts: RichText[],
     list?: { box: Box; items: string[] },
   ): Promise<void> {
@@ -461,7 +513,7 @@ export class G2Display {
           }),
         ),
         8000,
-        kind === 'home' ? '홈 표시' : '세션 표시',
+        `${kind} 표시`,
       );
       this.mode = kind;
       this.richKey = key;

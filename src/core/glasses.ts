@@ -339,6 +339,12 @@ export interface GlassesAdapter {
   /** 시스템 화면을 꾸며 그린다. 없으면 본체가 showList로 그린다. */
   showSystem?(view: SystemView): Promise<void>;
 
+  /**
+   * 화면 상단 선을 진행바로 바꾼다(폰의 타이머). null이면 원래 선으로 돌린다.
+   * 다음에 그릴 때 반영한다. 그려야 할 만큼 바뀌었으면 true.
+   */
+  setTopBar?(ratio: number | null): boolean;
+
   /** 명령 목록을 꾸며 그린다. 없으면 본체가 showList로 그린다. */
   showCommands?(view: CommandsView): Promise<void>;
 

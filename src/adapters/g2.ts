@@ -253,6 +253,10 @@ export class G2Adapter implements GlassesAdapter {
     await this.display.showCommandResult(view);
   }
 
+  setTopBar(ratio: number | null): boolean {
+    return this.display.setTopBar(ratio);
+  }
+
   onGesture(handler: (event: GestureEvent) => void): () => void {
     if (!this.bridge) return () => undefined;
     const stop = this.bridge.onEvenHubEvent((event: EvenHubEvent) => {

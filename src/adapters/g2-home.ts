@@ -76,6 +76,28 @@ export function gauge(ratio: number, cells: number): string {
   return '█'.repeat(n) + '▒'.repeat(cells - n);
 }
 
+/**
+ * 상단 진행바(폰의 타이머). 지나간 만큼 굵은 선(━), 남은 만큼 가는 선(─).
+ *
+ * 원래 선은 높이 2짜리 칸의 테두리다. 칸의 크기는 다시 세우지 않고는 못
+ * 바꾸므로(목록 선택이 풀린다) 진행바는 글자로 그리고 글자만 고친다.
+ * 두 선은 폭이 같아(20px) 칸 수가 늘 같다.
+ */
+export const TOP_BAR_W = SCREEN_W - 12;
+
+export function progressLine(ratio: number, width = TOP_BAR_W): string {
+  const cell = Math.max(getTextWidth('━'), getTextWidth('─'));
+  const cells = Math.floor(width / cell);
+  const n = Math.round(Math.min(Math.max(ratio, 0), 1) * cells);
+  return '━'.repeat(n) + '─'.repeat(cells - n);
+}
+
+/**
+ * 진행바 칸. 글자 한 줄(27px)의 가운데가 원래 선 자리(y=33)에 오게 둔다.
+ * 위아래 칸(상태줄·목록)과 겹치지만 칸에는 바탕이 없어 글자끼리만 안 닿으면 된다.
+ */
+export const TOP_BAR_BOX: Box = { x: 6, y: 20, w: TOP_BAR_W, h: 27, padding: 0, brightness: 3 };
+
 export interface Box {
   x: number;
   y: number;

@@ -8,6 +8,7 @@
 
 import {
   agentCli,
+  AgentCliError,
   type ChecklistItem,
   type Notification,
   type SessionEvent,
@@ -38,6 +39,15 @@ import {
   type NotificationsView,
   type SessionsView,
 } from './glasses.js';
+import {
+  durationLabel,
+  phoneEvents,
+  timerLabel,
+  timerRatio,
+  waterLabel,
+  type PhoneEvent,
+  type PhoneStatus,
+} from './phone.js';
 
 /**
  * 화면 구성.
@@ -148,6 +158,17 @@ const SERVER_POLL_MS = 60_000;
  * 촘촘히 돈다 — 평소에는 SSE가 즉시 알려주므로 자주 돌 이유가 없다.
  */
 const SERVER_POLL_FAST_MS = 5_000;
+
+/**
+ * 폰(Relay 앱)의 타이머·물 마시기를 읽는 간격.
+ *
+ * 폰은 같은 기기(127.0.0.1)라 싸다. 타이머가 끝난 것을 늦게 알리지 않게
+ * 짧게 잡는다. 폰이 답하지 않으면(옛 앱·서버에 직접 붙음) 드물게 읽는다.
+ */
+const PHONE_POLL_MS = 10_000;
+const PHONE_POLL_SLOW_MS = 60_000;
+/** 폰이 이만큼 답하지 않으면 가진 타이머를 버리고 원래 선으로 돌린다. */
+const PHONE_STALE_MS = 5 * 60_000;
 
 /**
  * 알림 팝업이 화면에 머무는 시간.
@@ -458,6 +479,15 @@ export class GlassesUI {
    */
   private lastSeenNotifId: string | null = null;
 
+  /** 폰의 타이머·물 마시기(phone.ts). 폰이 답하지 않으면 없다. */
+  private phone?: PhoneStatus;
+  /** phone을 받은 시각(ms). 그 사이 흐른 만큼 타이머를 줄여 그린다. */
+  private phoneAt = 0;
+  private phoneTimer?: ReturnType<typeof setTimeout>;
+  private phoneStopped = false;
+  /** 마지막으로 그린 홈 상태 글의 폰 부분. 바뀔 때만 다시 그린다. */
+  private lastPhoneLabel = '';
+
   /** 맥의 지금 상태. 시스템 화면에서 쓴다. */
   private sys?: SysSummary;
   private procs: SysProc[] = [];
@@ -531,7 +561,11 @@ export class GlassesUI {
     // 그렇고, 실기기라도 안경이 꺼져 있거나 BLE가 끊겨 있으면 마찬가지다.
     // 구독을 뒤에 두면 그런 경우에 영영 붙지 못해, 할 일을 바꿔도
     // 화면이 그대로다.
-    agentCli.onConnectionChange(() => this.watchServerData());
+    // 폰 상태도 다시 읽는다. 로그인 전에는 읽지 않아 드물게 돌고 있다.
+    agentCli.onConnectionChange(() => {
+      this.watchServerData();
+      this.watchPhone();
+    });
     // 쓰는 중에 토큰이 폐기되거나 만료되면 안경에도 알린다. 로그인 전의
     // 401(아직 토큰이 없음)에는 이미 '폰에서 인증' 안내가 떠 있다.
     agentCli.onUnauthorized(() => {
@@ -540,6 +574,7 @@ export class GlassesUI {
       void this.glasses.showText('로그인이 풀렸습니다.\n\n폰에서 다시 로그인해 주세요.').catch(() => undefined);
     });
     this.watchServerData();
+    this.watchPhone();
 
     await this.glasses.connect();
 
@@ -622,6 +657,89 @@ export class GlassesUI {
     );
 
     this.setPolling(this.sseDown);
+  }
+
+  /** 폰의 타이머·물 마시기를 주기적으로 읽는다. */
+  private watchPhone(): void {
+    clearTimeout(this.phoneTimer);
+    const tick = async (): Promise<void> => {
+      const ok = await this.refreshPhone();
+      if (this.phoneStopped) return;
+      this.phoneTimer = setTimeout(() => void tick(), ok ? PHONE_POLL_MS : PHONE_POLL_SLOW_MS);
+      (this.phoneTimer as { unref?: () => void }).unref?.();
+    };
+    void tick();
+  }
+
+  /**
+   * 폰 상태를 읽고 상단 진행바·홈 상태를 맞춘다. 끝난 타이머·물 마실 때는 팝업으로 알린다.
+   * 폰이 답했으면 true.
+   */
+  private async refreshPhone(): Promise<boolean> {
+    if (!agentCli.canPoll) return false;
+    let events: PhoneEvent[] = [];
+    try {
+      const next = await agentCli.phoneStatus();
+      events = phoneEvents(this.phone, next);
+      this.phone = next;
+      this.phoneAt = Date.now();
+      for (const e of events) this.noticePhone(e, next);
+    } catch (err) {
+      // 한두 번 못 읽는 것은 흔하다 — 폰 앱이 뒤에 있으면 가끔 늦는다. 그때마다
+      // 지우면 진행바가 사라졌다 돌아오며 화면을 통째로 다시 세워 깜빡였다.
+      // 가진 값으로 계속 줄여 그리고, 폰이 이 경로를 모르거나(404) 오래
+      // 답하지 않을 때만 원래 선으로 돌린다.
+      const missing = err instanceof AgentCliError && err.status === 404;
+      if (this.phone && (missing || Date.now() - this.phoneAt > PHONE_STALE_MS)) {
+        this.phone = undefined;
+        this.lastPhoneLabel = '';
+        this.glasses.setTopBar?.(null);
+        await this.render();
+      }
+      if (!this.phone) return false;
+    }
+    await this.drawPhone(events.length > 0);
+    return true;
+  }
+
+  /** 가진 폰 상태로 진행바·홈 상태를 맞춘다. 글자가 바뀌었을 때만 그린다. */
+  private async drawPhone(force: boolean): Promise<void> {
+    if (!this.phone) return;
+    const barChanged = this.glasses.setTopBar?.(timerRatio(this.phone.timer, this.phoneAt, Date.now())) ?? false;
+    const label = this.phoneLabel();
+    if (force || barChanged || label !== this.lastPhoneLabel) {
+      this.lastPhoneLabel = label;
+      await this.render();
+    }
+  }
+
+  private noticePhone(event: PhoneEvent, status: PhoneStatus): void {
+    this.wake();
+    if (event === 'timerDone') {
+      this.glasses.speak('타이머가 끝났습니다');
+      this.showNotice({
+        title: '타이머 종료',
+        text: `${durationLabel(status.timer.duration)} 타이머가 끝났습니다.`,
+        label: '타이머',
+        kind: 'done',
+      });
+    } else {
+      this.glasses.speak('물 마실 시간입니다');
+      this.showNotice({
+        title: '물 마실 시간',
+        text: `오늘 ${status.water.count}/${status.water.goal}잔 · 폰에서 [마셨어요]`,
+        label: '물 마시기',
+        kind: 'info',
+      });
+    }
+  }
+
+  /** 홈 상태 표시줄의 폰 부분(타이머·물). 없으면 빈 글. */
+  private phoneLabel(): string {
+    if (!this.phone) return '';
+    return [timerLabel(this.phone.timer, this.phoneAt, Date.now()), waterLabel(this.phone.water)]
+      .filter(Boolean)
+      .join('  ');
   }
 
   /**
@@ -769,9 +887,12 @@ export class GlassesUI {
       commands: this.snippets.length > 0 ? String(this.snippets.length) : '',
     };
 
+    // 타이머·물이 있으면 자리가 모자라 연결 표시는 점만 남긴다.
+    const phone = this.phoneLabel();
     const status = [
       busy > 0 ? `작업 ${busy}` : '',
-      this.sseDown ? '○ offline' : '● online',
+      phone,
+      phone ? (this.sseDown ? '○' : '●') : this.sseDown ? '○ offline' : '● online',
       clock(),
     ]
       .filter(Boolean)
@@ -2457,6 +2578,8 @@ export class GlassesUI {
     this.eventStop?.();
     this.lifecycleStop?.();
     clearInterval(this.pollTimer);
+    this.phoneStopped = true;
+    clearTimeout(this.phoneTimer);
     for (const stop of this.watchers.values()) stop();
     this.watchers.clear();
     this.setSpinning(false);

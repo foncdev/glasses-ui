@@ -22,7 +22,7 @@ import {
   type CommandResultView,
 } from '../core/glasses.js';
 import { fitBytes } from './g2-bytes.js';
-import { layoutHome, type Box } from './g2-home.js';
+import { layoutHome, progressLine, TOP_BAR_BOX, type Box } from './g2-home.js';
 import { layoutNotice, layoutNotification, layoutNotifications } from './g2-inbox.js';
 import { layoutSessions } from './g2-sessions.js';
 import { layoutHistory, layoutLive, layoutPermission } from './g2-talk.js';
@@ -125,6 +125,8 @@ export class G2Display {
   private richKey = '';
   /** 꾸민 화면의 글자 칸별 지금 내용. 바뀐 칸만 고치는 데 쓴다. */
   private richTexts = new Map<number, string>();
+  /** 상단 진행바 글자. null이면 원래 선(테두리)을 그린다. */
+  private topBar: string | null = null;
   /** 브리지 호출을 직렬화한다. 동시 호출은 연결을 끊을 수 있다. */
   private queue: Promise<unknown> = Promise.resolve();
   /**
@@ -486,6 +488,17 @@ export class G2Display {
    * 값이 바뀌면 통째로 다시 세운다. 조작을 받는 칸은 글자만 고치지 않는다 —
    * 할 일 화면의 안내 카드와 같다. 탭할 때만 다시 읽으므로 자주 일어나지 않는다.
    */
+  /**
+   * 상단 선을 진행바로 바꾼다. 다음에 그릴 때 반영한다.
+   * 칸 수가 정해져 있어 비율이 조금 바뀌어서는 글자가 같다. 그때는 false.
+   */
+  setTopBar(ratio: number | null): boolean {
+    const next = ratio === null ? null : progressLine(ratio);
+    if (next === this.topBar) return false;
+    this.topBar = next;
+    return true;
+  }
+
   async showSystem(view: SystemView): Promise<void> {
     const l = layoutSystem(view);
     await this.showRich('system', [
@@ -558,6 +571,13 @@ export class G2Display {
   ): Promise<void> {
     const bridge = this.bridge;
     if (!bridge) return;
+
+    // 타이머가 돌면 상단 선 자리에 진행바 글자를 둔다. 글자만 바뀌므로 live다 —
+    // 진행바가 찰 때마다 화면을 다시 세우면 목록 선택이 첫 항목으로 돌아간다.
+    const bar = this.topBar;
+    if (bar !== null) {
+      texts = texts.map((t) => (t.id === DIVIDER_ID ? { ...t, box: TOP_BAR_BOX, text: bar, live: true } : t));
+    }
 
     // 목록 글자, 고정 칸의 글자, 칸의 자리·크기가 같으면 같은 화면이다.
     const key = JSON.stringify([

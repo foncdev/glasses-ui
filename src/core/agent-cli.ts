@@ -6,6 +6,8 @@
  * 이 파일 밖에서는 접속 경로를 알지 못하게 했다.
  */
 
+import type { PhoneStatus } from './phone.js';
+
 export interface SessionInfo {
   id: string;
   workspaceId: string;
@@ -314,6 +316,11 @@ export class AgentCliClient {
   // --- 시스템 상태 ---
   //
   // terminal-agent가 갖고 있다. 터미널을 만들지 않고도 읽을 수 있다.
+
+  /** 폰(Relay 앱)의 타이머·물 마시기. 폰에 붙어 있을 때만 있다. */
+  async phoneStatus(): Promise<PhoneStatus> {
+    return this.request<PhoneStatus>('/phone/status');
+  }
 
   async sysSummary(): Promise<SysSummary> {
     return this.request<SysSummary>('/sys/summary');

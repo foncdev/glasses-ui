@@ -100,6 +100,11 @@ export interface Connection {
 export interface AuthStatus {
   configured: boolean;
   username: string;
+  /**
+   * key면 아이디 없이 접속 키 하나로 들어온다. 폰의 Relay 앱이 안경앱의
+   * 서버일 때다(127.0.0.1). relay-service는 이 값을 주지 않는다.
+   */
+  mode?: 'key';
 }
 
 /** 요청 하나를 기다리는 최대 시간. relay는 agent 중계에 30초를 두지만 폰 화면은 그보다 짧게 끊는다. */

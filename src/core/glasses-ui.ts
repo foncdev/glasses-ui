@@ -1725,9 +1725,12 @@ export class GlassesUI {
   private noticeForNewNotifications(items: Notification[]): void {
     const newest = items[0];
     if (!newest) {
-      // 다 지웠다. null이 아닌 빈 값으로 둬야 다음에 오는 알림을
-      // 첫 조회가 아니라 새 알림으로 본다.
-      if (this.lastSeenNotifId !== null) this.lastSeenNotifId = '';
+      // 비어 있다(다 지웠거나 처음부터 없다). null이 아닌 빈 값으로 둬야
+      // 다음에 오는 알림을 첫 조회가 아니라 새 알림으로 본다.
+      //
+      // 처음 조회에서 비어 있어도 그렇다. 예전에는 null로 남겨 두어, 알림이
+      // 하나도 없던 상태(폰만으로 막 쓰기 시작할 때)의 첫 알림이 팝업으로 뜨지 않았다.
+      this.lastSeenNotifId = '';
       return;
     }
 

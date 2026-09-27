@@ -134,3 +134,30 @@ test('할 일 화면에서는 할 일 변경 알림을 팝업으로 띄우지 �
   r.noticeForNewNotifications([n('b', '배포 실패')]);
   assert.equal((r.notice as { title: string } | null)?.title, '배포 실패', '다른 알림은 띄운다');
 });
+
+test('알림이 하나도 없던 뒤에 온 첫 알림도 팝업으로 띄운다', () => {
+  // 폰만으로 막 쓰기 시작하면 알림이 0개다. 예전에는 빈 목록을 기준으로 삼지
+  // 않아, 그다음 첫 알림을 '처음 조회'로 여겨 띄우지 않았다.
+  const r = new GlassesUI(
+    {
+      name: 'stub', isVoiceEnabled: false,
+      async connect() {}, async disconnect() {}, async showList() {}, async showText() {},
+      speak() {}, stopSpeaking() {}, setVoiceEnabled() {},
+      async saveSetting() {}, async loadSetting() { return ''; },
+      onGesture() { return () => {}; },
+    } as unknown as GlassesAdapter,
+    { onLog: () => {} },
+  ) as unknown as Record<string, unknown> & { noticeForNewNotifications(items: unknown[]): void };
+  const n = (id: string, title: string) => ({ id, title, body: '', kind: 'info', createdAt: '' });
+  r.screen = 'home';
+  r.noticeForNewNotifications([]);
+  assert.equal(r.lastSeenNotifId, '', '빈 목록도 기준이다');
+  r.noticeForNewNotifications([n('a', '할 일 추가: 우유')]);
+  assert.equal((r.notice as { title: string } | null)?.title, '할 일 추가: 우유');
+
+  // 처음 본 목록에 알림이 있으면 예전처럼 쏟아내지 않는다.
+  const fresh = new GlassesUI(r.glasses as GlassesAdapter, { onLog: () => {} }) as unknown as typeof r;
+  fresh.screen = 'home';
+  fresh.noticeForNewNotifications([n('x', '옛 알림')]);
+  assert.equal(fresh.notice ?? null, null);
+});

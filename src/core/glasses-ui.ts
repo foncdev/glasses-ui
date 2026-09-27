@@ -41,10 +41,13 @@ import {
 } from './glasses.js';
 import {
   durationLabel,
+  phoneActions,
   phoneEvents,
+  phoneHeader,
   timerLabel,
   timerRatio,
   waterLabel,
+  type PhoneAction,
   type PhoneEvent,
   type PhoneStatus,
 } from './phone.js';
@@ -71,6 +74,7 @@ type Screen =
   | 'system'
   | 'commands'
   | 'command-result'
+  | 'phone'
   | 'settings';
 
 /** home에서 한 단계 아래로 내려갈 메뉴. 순서가 곧 커서 위치다. */
@@ -119,6 +123,7 @@ const MENU = [
   { label: '체크 보기', screen: 'checklist' as const },
   { label: '시스템', screen: 'system' as const },
   { label: '명령', screen: 'commands' as const },
+  { label: '타이머 · 물', screen: 'phone' as const },
   { label: '설정', screen: 'settings' as const },
 ];
 
@@ -457,6 +462,8 @@ export class GlassesUI {
   /** home과 settings의 커서. 화면마다 따로 둬야 오가도 위치가 남는다. */
   private menuCursor = 0;
   private setCursor = 0;
+  /** 타이머·물 화면의 커서. */
+  private phoneCursor = 0;
 
   /** 서버가 쌓아둔 알림. */
   private notifications: Notification[] = [];
@@ -711,6 +718,29 @@ export class GlassesUI {
       this.lastPhoneLabel = label;
       await this.render();
     }
+  }
+
+  /** 타이머·물 조작을 폰에 보내고 바뀐 상태로 다시 그린다. */
+  private async runPhoneAction(action: PhoneAction): Promise<void> {
+    const before = this.phone ? phoneActions(this.phone).map((a) => a.label).join('|') : '';
+    try {
+      const next = action.timer
+        ? await agentCli.phoneTimer(action.timer.action, action.timer.minutes)
+        : await agentCli.phoneWater(action.water ?? 'drink');
+      // 안경에서 한 일이다. 끝남·물 알림을 여기서 다시 띄우지 않게 비교 없이 바꾼다.
+      this.phone = next;
+      this.phoneAt = Date.now();
+      this.log(action.label, 'ok');
+    } catch (err) {
+      this.log(`${action.label} 실패: ${(err as Error).message}`, 'warn');
+      return;
+    }
+    // 줄이 바뀌면(시작 → 멈춤…) 목록을 다시 세워 선택이 첫 줄로 간다. 커서도 맞춘다.
+    const after = phoneActions(this.phone).map((a) => a.label).join('|');
+    if (after !== before) this.phoneCursor = 0;
+    this.glasses.setTopBar?.(timerRatio(this.phone.timer, this.phoneAt, this.phoneAt));
+    this.lastPhoneLabel = this.phoneLabel();
+    await this.render();
   }
 
   private noticePhone(event: PhoneEvent, status: PhoneStatus): void {
@@ -1504,7 +1534,20 @@ export class GlassesUI {
         return;
       }
 
-      // 11) 설정.
+      // 11) 타이머·물 마시기. 폰(Relay 앱)의 것을 조작한다.
+      if (this.screen === 'phone') {
+        if (!this.phone) {
+          await this.glasses.showList('타이머 · 물 · 더블탭 뒤로', ['폰의 Relay 앱에 붙어 있을 때 씁니다']);
+          return;
+        }
+        await this.glasses.showList(
+          `${phoneHeader(this.phone, this.phoneAt, Date.now())} · 더블탭 뒤로`,
+          phoneActions(this.phone).map((a) => a.label),
+        );
+        return;
+      }
+
+      // 12) 설정.
       if (this.screen === 'settings') {
         await this.glasses.showList('설정 · 더블탭 뒤로', [
           this.glasses.isVoiceEnabled ? '음성: 켜짐' : '음성: 꺼짐',
@@ -1778,7 +1821,8 @@ export class GlassesUI {
       | 'notifCursor'
       | 'histCursor'
       | 'checkCursor'
-      | 'cmdCursor',
+      | 'cmdCursor'
+      | 'phoneCursor',
     count: number,
   ): boolean {
     const last = Math.max(count - 1, 0);
@@ -2075,6 +2119,13 @@ export class GlassesUI {
       await this.render();
       return;
     }
+    if (target === 'phone') {
+      this.screen = 'phone';
+      this.phoneCursor = 0;
+      await this.refreshPhone();
+      await this.render();
+      return;
+    }
     if (target === 'settings') {
       this.screen = 'settings';
       this.setCursor = 0;
@@ -2310,6 +2361,21 @@ export class GlassesUI {
       if (gesture === 'tap' && this.cmdResult?.awaitingConfirm) {
         const s = this.snippets.find((x) => x.id === this.cmdResult?.snippetId);
         if (s) await this.runSnippet(s, true);
+      }
+      return;
+    }
+
+    // 타이머·물: 누르면 폰에 조작을 보낸다.
+    if (this.screen === 'phone') {
+      if (gesture === 'doubleTap') return this.goHome();
+      const actions = this.phone ? phoneActions(this.phone) : [];
+      if (this.moveCursor(gesture, selectedIndex, 'phoneCursor', actions.length)) {
+        await this.render();
+        return;
+      }
+      if (gesture === 'tap') {
+        const action = actions[this.phoneCursor];
+        if (action) await this.runPhoneAction(action);
       }
       return;
     }

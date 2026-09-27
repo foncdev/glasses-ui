@@ -141,7 +141,7 @@ test('홈은 요약과 메뉴를 보여준다', async () => {
   const { shown, restore } = await atHome();
   try {
     const last = shown.at(-1)!;
-    assert.deepEqual(last.items, ['에이전트', '알림 보기', '체크 보기', '시스템', '명령', '설정']);
+    assert.deepEqual(last.items, ['에이전트', '알림 보기', '체크 보기', '시스템', '명령', '타이머 · 물', '설정']);
     // 상단 한 줄에 세션·알림·체크가 모두 있어야 한다.
     assert.match(last.header, /세션 .*알림 .*체크/);
   } finally {
@@ -506,5 +506,59 @@ test('로고 설정은 다시 켜도 유지된다', async () => {
     assert.ok(!second.shown.at(-1)!.side, '다시 켜도 로고는 꺼진 채여야 한다');
   } finally {
     Object.assign(agentCli, orig);
+  }
+});
+
+test('타이머 · 물 화면에서 폰의 타이머를 시작·멈추고 물을 센다', async () => {
+  const { r, shown, fire, restore } = await atHome();
+  const calls: string[] = [];
+  let phase: 'idle' | 'running' | 'paused' = 'idle';
+  let count = 2;
+  const state = () => ({
+    timer: { phase, duration: 1800, remaining: 1800, progress: 0 },
+    water: { enabled: true, count, goal: 8 },
+  });
+  const orig = { phoneStatus: agentCli.phoneStatus, phoneTimer: agentCli.phoneTimer, phoneWater: agentCli.phoneWater };
+  agentCli.phoneStatus = async () => state() as never;
+  agentCli.phoneTimer = async (action, minutes) => {
+    calls.push(`timer ${action}${minutes ? ` ${minutes}` : ''}`);
+    phase = action === 'pause' ? 'paused' : action === 'reset' ? 'idle' : 'running';
+    return state() as never;
+  };
+  agentCli.phoneWater = async (action) => {
+    calls.push(`water ${action}`);
+    count += action === 'drink' ? 1 : -1;
+    return state() as never;
+  };
+  Object.defineProperty(agentCli, 'canPoll', { get: () => true, configurable: true });
+  try {
+    fire('tap', menuIndex(shown, '타이머 · 물'));
+    await settle();
+    assert.equal(r.screen, 'phone');
+    assert.deepEqual(shown.at(-1)!.items.slice(0, 3), ['▶ 60분 시작', '▶ 30분 시작', '▶ 15분 시작']);
+    assert.match(shown.at(-1)!.header, /타이머 대기 · 물 2\/8잔/);
+
+    fire('tap', 1); // 30분 시작
+    await settle();
+    assert.deepEqual(calls, ['timer start 30']);
+    assert.deepEqual(shown.at(-1)!.items.slice(0, 3), ['■ 멈춤', '+1분', '초기화'], '돌면 멈춤·+1분·초기화');
+    assert.match(shown.at(-1)!.header, /타이머 ▶ 30분/);
+
+    fire('tap', 0); // 멈춤
+    await settle();
+    assert.equal(shown.at(-1)!.items[0], '▶ 계속');
+
+    fire('tap', 3); // 물 한 잔 마셨어요
+    await settle();
+    assert.equal(calls.at(-1), 'water drink');
+    assert.match(shown.at(-1)!.header, /물 3\/8잔/);
+
+    fire('doubleTap');
+    await settle();
+    assert.equal(r.screen, 'home');
+  } finally {
+    Object.assign(agentCli, orig);
+    delete (agentCli as { canPoll?: boolean }).canPoll;
+    restore();
   }
 });

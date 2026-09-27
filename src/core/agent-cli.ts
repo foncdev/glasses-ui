@@ -6,7 +6,7 @@
  * 이 파일 밖에서는 접속 경로를 알지 못하게 했다.
  */
 
-import type { PhoneStatus } from './phone.js';
+import type { PhoneStatus, PhoneTimerAction } from './phone.js';
 
 export interface SessionInfo {
   id: string;
@@ -320,6 +320,19 @@ export class AgentCliClient {
   /** 폰(Relay 앱)의 타이머·물 마시기. 폰에 붙어 있을 때만 있다. */
   async phoneStatus(): Promise<PhoneStatus> {
     return this.request<PhoneStatus>('/phone/status');
+  }
+
+  /** 폰의 타이머를 조작한다. start에 minutes(60·30·15)를 주면 그 길이로 새로 시작한다. */
+  async phoneTimer(action: PhoneTimerAction, minutes?: number): Promise<PhoneStatus> {
+    return this.request<PhoneStatus>('/phone/timer', {
+      method: 'POST',
+      body: JSON.stringify(minutes ? { action, minutes } : { action }),
+    });
+  }
+
+  /** 물 한 잔을 세거나 뺀다. */
+  async phoneWater(action: 'drink' | 'undo'): Promise<PhoneStatus> {
+    return this.request<PhoneStatus>('/phone/water', { method: 'POST', body: JSON.stringify({ action }) });
   }
 
   async sysSummary(): Promise<SysSummary> {

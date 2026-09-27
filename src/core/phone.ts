@@ -77,6 +77,52 @@ export function waterLabel(w: PhoneWater): string {
 
 export type PhoneEvent = 'timerDone' | 'waterDue';
 
+export type PhoneTimerAction = 'start' | 'pause' | 'resume' | 'add' | 'reset';
+
+/** 안경의 타이머·물 화면 한 줄. 누르면 폰에 조작을 보낸다. */
+export interface PhoneAction {
+  label: string;
+  timer?: { action: PhoneTimerAction; minutes?: number };
+  water?: 'drink' | 'undo';
+}
+
+/** 타이머 길이 선택지(분). 폰과 같다. */
+export const TIMER_PRESETS = [60, 30, 15];
+
+/**
+ * 타이머·물 화면의 줄. 타이머 상태에 따라 고를 것이 달라진다.
+ *
+ * 남은 시간·잔 수는 줄에 넣지 않고 머리줄에 둔다. 목록 글자가 바뀌면
+ * 목록을 다시 세워 선택이 첫 줄로 돌아가기 때문이다. 줄은 누를 때만 바뀐다.
+ */
+export function phoneActions(s: PhoneStatus): PhoneAction[] {
+  const timer: PhoneAction[] =
+    s.timer.phase === 'running'
+      ? [
+          { label: '■ 멈춤', timer: { action: 'pause' } },
+          { label: '+1분', timer: { action: 'add' } },
+          { label: '초기화', timer: { action: 'reset' } },
+        ]
+      : s.timer.phase === 'paused'
+        ? [
+            { label: '▶ 계속', timer: { action: 'resume' } },
+            { label: '+1분', timer: { action: 'add' } },
+            { label: '초기화', timer: { action: 'reset' } },
+          ]
+        : TIMER_PRESETS.map((m) => ({ label: `▶ ${m}분 시작`, timer: { action: 'start' as const, minutes: m } }));
+  return [
+    ...timer,
+    { label: '물 한 잔 마셨어요', water: 'drink' },
+    { label: '물 한 잔 빼기', water: 'undo' },
+  ];
+}
+
+/** 타이머·물 화면의 머리줄. 남은 시간과 오늘 잔 수를 보인다. */
+export function phoneHeader(s: PhoneStatus, fetchedAt: number, now: number): string {
+  const timer = timerLabel(s.timer, fetchedAt, now) || '대기';
+  return `타이머 ${timer} · 물 ${s.water.count}/${s.water.goal}잔`;
+}
+
 /**
  * 앞서 받은 것과 비교해 알릴 일을 찾는다.
  * 처음 받은 것에는 알리지 않는다 — 안경을 켰을 때 지난 일이 뜨면 안 된다.

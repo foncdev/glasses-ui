@@ -18,6 +18,8 @@ import {
   type NotificationsView,
   type SessionsView,
   type SystemView,
+  type CommandsView,
+  type CommandResultView,
 } from '../core/glasses.js';
 import { fitBytes } from './g2-bytes.js';
 import { layoutHome, type Box } from './g2-home.js';
@@ -26,6 +28,7 @@ import { layoutSessions } from './g2-sessions.js';
 import { layoutHistory, layoutLive, layoutPermission } from './g2-talk.js';
 import { layoutChecklist } from './g2-todo.js';
 import { layoutSystem } from './g2-sys.js';
+import { layoutCommandResult, layoutCommands } from './g2-cmd.js';
 import {
   CreateStartUpPageContainer,
   ListContainerProperty,
@@ -67,7 +70,9 @@ type RichKind =
   | 'live'
   | 'permission'
   | 'checklist'
-  | 'system';
+  | 'system'
+  | 'commands'
+  | 'command-result';
 
 /** 꾸민 화면의 글자 칸 하나. live면 자리가 그대로일 때 글자만 고친다. */
 interface RichText {
@@ -489,6 +494,37 @@ export class G2Display {
       { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
       { id: SIDE_ID, name: SIDE_NAME, box: l.gauges, text: l.gauges.text, capture: true },
       ...(l.procs ? [{ id: BODY_ID, name: BODY_NAME, box: l.procs, text: l.procs.text, live: true }] : []),
+      { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
+    ]);
+  }
+
+  /** 꾸민 명령 목록. 명령이 없으면 안내 카드가 조작을 받는다. */
+  async showCommands(view: CommandsView): Promise<void> {
+    const l = layoutCommands(view);
+    await this.showRich(
+      'commands',
+      [
+        { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+        { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+        { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+        { id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text, live: !l.card.capture, capture: l.card.capture },
+        { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
+      ],
+      l.list ? { box: l.list, items: l.list.items } : undefined,
+    );
+  }
+
+  /**
+   * 꾸민 실행 결과. 목록이 없어 결과 카드가 조작(탭 실행·더블탭 뒤로)을 받는다.
+   * 실행 중 → 결과처럼 카드가 바뀌면 통째로 다시 세운다.
+   */
+  async showCommandResult(view: CommandResultView): Promise<void> {
+    const l = layoutCommandResult(view);
+    await this.showRich('command-result', [
+      { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+      { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+      { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+      { id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text, capture: true },
       { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
     ]);
   }

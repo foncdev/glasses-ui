@@ -26,6 +26,8 @@ import {
   type ItemState,
   type ChecklistView,
   type SystemView,
+  type CommandsView,
+  type CommandResultView,
   type HistoryView,
   type HomeView,
   type LineKind,
@@ -475,10 +477,18 @@ export class GlassesUI {
    */
   private cmdResult?: {
     label: string;
+    /** 글자만 그리는 기기(showText)에 쓰는 본문. */
     text: string;
     /** 참이면 아직 실행하지 않았고, 탭하면 실행한다. */
     awaitingConfirm?: boolean;
     snippetId?: string;
+    /** 꾸민 결과 화면(showCommandResult)에 쓰는 값. */
+    command?: string;
+    state?: CommandResultView['state'];
+    lines?: string[];
+    exitCode?: number;
+    tookMs?: number;
+    timedOut?: boolean;
   };
 
   /** SSE가 막혀 있는지. 막혀 있으면 폴링을 촘촘히 돈다. */
@@ -894,6 +904,55 @@ export class GlassesUI {
     };
   }
 
+  /** 명령 목록에 그릴 것. 오른쪽 카드는 고른 줄과 상관없는 요약이다. */
+  private commandsView(): CommandsView {
+    const cron = this.snippets.filter((x) => x.kind === 'cron').length;
+    // 가장 최근에 돈 것. ISO 시각이라 글자 비교로 순서가 맞는다.
+    const last = this.snippets
+      .filter((x) => x.lastRunAt && x.lastExitCode !== undefined)
+      .sort((a, b) => (b.lastRunAt! > a.lastRunAt! ? 1 : -1))[0];
+    const ago = last ? timeAgo(last.lastRunAt) : '';
+    return {
+      title: '$ ~/cmd',
+      status: [cron > 0 ? `예약 ${cron}` : '', clock()].filter(Boolean).join('   '),
+      rows: this.snippets.map((x) => ({
+        label: x.label,
+        ...(x.kind === 'cron' && x.everyMinutes ? { cron: x.everyMinutes } : {}),
+      })),
+      counts: { once: this.snippets.length - cron, cron },
+      last: last ? { label: last.label, exitCode: last.lastExitCode!, ago: ago === '방금' ? ago : `${ago} 전` } : undefined,
+      hint: '● 실행    ●● 뒤로',
+      note: '폰·웹에서 등록',
+    };
+  }
+
+  /** 실행 결과에 그릴 것. 종료 코드와 걸린 시간은 상태 표시줄로 올린다. */
+  private commandResultView(r: NonNullable<GlassesUI['cmdResult']>): CommandResultView {
+    const state = r.state ?? (r.awaitingConfirm ? 'confirm' : 'done');
+    let status = clock();
+    if (state === 'done') {
+      const ok = r.exitCode === 0 && !r.timedOut;
+      // 금방 끝난 명령은 '0.0초'로 보여 멈춘 것처럼 읽힌다.
+      const took =
+        r.tookMs === undefined ? '' : r.tookMs < 100 ? ' · 0.1초 미만' : ` · ${(r.tookMs / 1000).toFixed(1)}초`;
+      const exit = r.timedOut ? '시간 초과' : `종료 ${r.exitCode ?? '?'}`;
+      status = `${ok ? '◎' : '◇'} ${exit}${took}   ${clock()}`;
+    } else if (state === 'failed') {
+      status = `◇ 실패   ${clock()}`;
+    } else if (state === 'confirm') {
+      status = `▲ 확인 필요   ${clock()}`;
+    }
+    return {
+      title: `$ ${r.label}`,
+      status,
+      state,
+      command: r.command ?? '',
+      lines: r.lines ?? r.text.split('\n'),
+      hint: state === 'confirm' ? '● 그래도 실행    ●● 취소' : '●● 목록으로',
+      note: state === 'done' ? r.command ?? '' : '',
+    };
+  }
+
   /** 시스템 화면에 그릴 것. 못 구한 값(-1·0)은 null로 바꿔 넘긴다. */
   private systemScreenView(): SystemView {
     const sys = this.sys;
@@ -1293,6 +1352,10 @@ export class GlassesUI {
 
       // 9) 등록한 명령 목록.
       if (this.screen === 'commands') {
+        if (this.glasses.showCommands) {
+          await this.glasses.showCommands(this.commandsView());
+          return;
+        }
         if (this.snippets.length === 0) {
           await this.glasses.showList('명령 · 더블탭 뒤로', [
             '등록된 명령이 없습니다',
@@ -1312,6 +1375,10 @@ export class GlassesUI {
 
       // 10) 실행 결과.
       if (this.screen === 'command-result') {
+        if (this.glasses.showCommandResult && this.cmdResult) {
+          await this.glasses.showCommandResult(this.commandResultView(this.cmdResult));
+          return;
+        }
         await this.glasses.showText(resultView(this.cmdResult));
         return;
       }
@@ -1746,7 +1813,7 @@ export class GlassesUI {
   private async runSnippet(s: Snippet, confirm = false): Promise<void> {
     this.wake();
     this.screen = 'command-result';
-    this.cmdResult = { label: s.label, text: '실행 중…', snippetId: s.id };
+    this.cmdResult = { label: s.label, text: '실행 중…', snippetId: s.id, command: s.command, state: 'running' };
     await this.render();
 
     try {
@@ -1759,6 +1826,9 @@ export class GlassesUI {
           text: `${why || '되돌릴 수 없는 명령입니다.'}\n\n그래도 실행할까요?`,
           awaitingConfirm: true,
           snippetId: s.id,
+          command: s.command,
+          state: 'confirm',
+          lines: (res.risks ?? []).map((r) => r.reason),
         };
         this.glasses.speak('확인이 필요합니다');
         await this.render();
@@ -1771,10 +1841,24 @@ export class GlassesUI {
         label: s.label,
         text: head + (r?.output?.trim() || '(출력 없음)'),
         snippetId: s.id,
+        command: s.command,
+        state: 'done',
+        // 끝의 빈 줄은 버린다. 출력은 대개 줄바꿈으로 끝나 빈 줄 하나가 자리를 먹는다.
+        lines: (r?.output ?? '').replace(/\s+$/, '').split('\n').filter((l, i, a) => l || i < a.length - 1),
+        exitCode: r?.exitCode,
+        tookMs: r?.tookMs,
+        timedOut: r?.timedOut,
       };
       this.log(`[${s.label}] 종료 ${r?.exitCode ?? '?'} (${r?.tookMs ?? 0}ms)`, 'ok');
     } catch (err) {
-      this.cmdResult = { label: s.label, text: `실패: ${(err as Error).message}`, snippetId: s.id };
+      this.cmdResult = {
+        label: s.label,
+        text: `실패: ${(err as Error).message}`,
+        snippetId: s.id,
+        command: s.command,
+        state: 'failed',
+        lines: [(err as Error).message],
+      };
       this.log(`[${s.label}] 실행 실패: ${(err as Error).message}`, 'error');
     }
     await this.render();
@@ -2090,6 +2174,13 @@ export class GlassesUI {
         this.cmdResult = undefined;
         this.screen = 'commands';
         await this.render();
+        // 방금 돌린 결과가 오른쪽 카드(마지막 실행)에 보이도록 다시 읽는다.
+        try {
+          this.snippets = await agentCli.listSnippets();
+          if (this.screen === 'commands') await this.render();
+        } catch {
+          // 못 읽어도 목록은 그대로 쓸 수 있다.
+        }
         return;
       }
       if (gesture === 'tap' && this.cmdResult?.awaitingConfirm) {

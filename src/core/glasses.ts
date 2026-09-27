@@ -230,6 +230,33 @@ export interface SystemView {
   note: string;
 }
 
+/** 등록한 명령 목록(showCommands). */
+export interface CommandsView {
+  title: string;
+  status: string;
+  /** cron은 예약 주기(분). 직접 실행하는 명령은 없다. */
+  rows: ReadonlyArray<{ label: string; cron?: number }>;
+  counts: { once: number; cron: number };
+  /** 가장 최근에 돈 명령. 한 번도 돌지 않았으면 없다. */
+  last?: { label: string; exitCode: number; ago: string };
+  hint: string;
+  /** 안내 줄 오른쪽. 어디서 등록하는지. */
+  note: string;
+}
+
+/** 명령 실행 결과(showCommandResult). */
+export interface CommandResultView {
+  title: string;
+  status: string;
+  /** confirm은 되돌릴 수 없어 보여 아직 실행하지 않은 상태다. */
+  state: 'running' | 'done' | 'failed' | 'confirm';
+  command: string;
+  /** done은 출력, failed는 실패 이유, confirm은 걱정되는 까닭. */
+  lines: readonly string[];
+  hint: string;
+  note: string;
+}
+
 /** 세션 화면에 그릴 것. 어떻게 그릴지는 어댑터가 정한다(showSessions). */
 export interface SessionsView {
   /** 상태 표시줄 왼쪽. */
@@ -311,6 +338,12 @@ export interface GlassesAdapter {
 
   /** 시스템 화면을 꾸며 그린다. 없으면 본체가 showList로 그린다. */
   showSystem?(view: SystemView): Promise<void>;
+
+  /** 명령 목록을 꾸며 그린다. 없으면 본체가 showList로 그린다. */
+  showCommands?(view: CommandsView): Promise<void>;
+
+  /** 명령 실행 결과를 꾸며 그린다. 없으면 본체가 showText로 그린다. */
+  showCommandResult?(view: CommandResultView): Promise<void>;
 
   /** 제스처를 구독한다. 반환값을 호출하면 끊는다. */
   onGesture(handler: (event: GestureEvent) => void): () => void;

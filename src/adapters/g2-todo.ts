@@ -6,6 +6,7 @@
  * 덜 들어왔다.
  */
 import type { ChecklistView } from '../core/glasses.js';
+import { msg } from '../core/i18n.js';
 import { type Box, SCREEN_W, center, gauge, listHeight, spread, spreadItem } from './g2-home.js';
 import { type StatusParts, type TextBox, boxHeight, footer, statusParts } from './g2-inbox.js';
 
@@ -29,15 +30,15 @@ export function layoutChecklist(view: ChecklistView): ChecklistLayout {
     const inner = cardW - 2 * (8 + 1);
     return {
       ...base,
-      footer: footer('●● 뒤로', ''),
+      footer: footer(msg().hintBack, ''),
       card: {
         x: (SCREEN_W - cardW) / 2, y: 70, w: cardW, h: boxHeight(4, 8, 1),
         padding: 8, border: { width: 1, color: 6, radius: 10 }, brightness: 3,
         text: [
           center(TODO_GLYPH.todo, inner),
-          center('할 일이 없습니다', inner),
+          center(msg().noTodosTitle, inner),
           '',
-          center('폰이나 웹에서 추가하면 여기 뜹니다', inner),
+          center(msg().noTodosHint, inner),
         ].join('\n'),
         capture: true,
       },
@@ -53,10 +54,10 @@ export function layoutChecklist(view: ChecklistView): ChecklistLayout {
   const { done, total } = view.progress;
   const ratio = total > 0 ? done / total : 0;
   const card = [
-    spread('진행', `${Math.round(ratio * 100)}%`, inner),
+    spread(msg().todoProgress, `${Math.round(ratio * 100)}%`, inner),
     gauge(ratio, 7),
-    spread(`${TODO_GLYPH.todo}  남음`, String(total - done), inner),
-    spread(`${TODO_GLYPH.done}  완료`, String(done), inner),
+    spread(`${TODO_GLYPH.todo}  ${msg().todoLeft}`, String(total - done), inner),
+    spread(`${TODO_GLYPH.done}  ${msg().todoDone}`, String(done), inner),
   ];
   const rows = [
     ...view.items.map((i) => spreadItem(`${i.done ? TODO_GLYPH.done : TODO_GLYPH.todo}  ${i.text}`, '', rowW)),

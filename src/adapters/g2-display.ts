@@ -22,6 +22,7 @@ import {
   type CommandResultView,
 } from '../core/glasses.js';
 import { fitBytes } from './g2-bytes.js';
+import { msg } from '../core/i18n.js';
 import { layoutHome, progressLine, TOP_BAR_BOX, type Box } from './g2-home.js';
 import { layoutNotice, layoutNotification, layoutNotifications } from './g2-inbox.js';
 import { layoutSessions } from './g2-sessions.js';
@@ -103,7 +104,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   return Promise.race([
     p,
     new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} 응답 없음 (${ms}ms)`)), ms),
+      setTimeout(() => reject(new Error(msg().errNoResponse(label, ms))), ms),
     ),
   ]);
 }
@@ -158,7 +159,7 @@ export class G2Display {
       paddingLength: 8,
       containerID: MAIN_ID,
       containerName: MAIN_NAME,
-      content: '연결 중…',
+      content: msg().connecting,
       isEventCapture: 1,
     });
 
@@ -173,7 +174,7 @@ export class G2Display {
       const rebuilt = await this.bridge.rebuildPageContainer(
         new RebuildPageContainer({ containerTotalNum: 1, textObject: [main] }),
       );
-      if (!rebuilt) throw new Error(`시작 페이지 생성 실패 (코드 ${result})`);
+      if (!rebuilt) throw new Error(msg().errStartup(String(result)));
     }
     this.mode = 'text';
     return this.bridge;
@@ -220,7 +221,7 @@ export class G2Display {
             }),
           ),
           6000,
-          '텍스트 갱신',
+          msg().opText,
         );
         return;
       }
@@ -248,7 +249,7 @@ export class G2Display {
           }),
         ),
         8000,
-        '화면 전환',
+        msg().opSwitch,
       );
       this.mode = 'text';
     });
@@ -264,7 +265,7 @@ export class G2Display {
 
     // 리스트는 최대 20개, 항목당 63바이트다(64자가 아니다). g2-bytes 참고.
     const names = items.slice(0, LIST_MAX_ITEMS).map((s) => fitBytes(clamp(s.replace(/\n/g, ' '), 64)));
-    if (names.length === 0) names.push('(비어 있음)');
+    if (names.length === 0) names.push(msg().emptyList);
 
     const key = JSON.stringify([names, side ?? []]);
     const headerText = clamp(header, 60);
@@ -284,7 +285,7 @@ export class G2Display {
             }),
           ),
           6000,
-          '머리줄 갱신',
+          msg().opHeader,
         ).catch(() => false);
         if (ok) {
           this.listHeader = headerText;
@@ -362,7 +363,7 @@ export class G2Display {
           }),
         ),
         8000,
-        '목록 표시',
+        msg().opList,
       );
       this.mode = 'list';
       this.listKey = key;
@@ -607,7 +608,7 @@ export class G2Display {
               }),
             ),
             6000,
-            '화면 갱신',
+            msg().opRefresh,
           ).catch(() => false);
           if (!done) {
             ok = false;
@@ -673,7 +674,7 @@ export class G2Display {
           }),
         ),
         8000,
-        `${kind} 표시`,
+        msg().opShow(kind),
       );
       this.mode = kind;
       this.richKey = key;

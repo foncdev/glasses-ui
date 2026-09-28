@@ -6,6 +6,8 @@
  * 없으면 조용히 넘어간다 — 알림이 없다고 앱이 멈추면 안 된다.
  */
 
+import { speechLang } from '../core/i18n.js';
+
 export class Speaker {
   private enabled = true;
   private available = typeof window !== 'undefined' && 'speechSynthesis' in window;
@@ -26,7 +28,7 @@ export class Speaker {
   }
 
   /** 짧게 읽어준다. 긴 결과는 앞부분만 읽는다. */
-  speak(text: string, lang = 'ko-KR'): void {
+  speak(text: string, lang = speechLang()): void {
     if (!this.enabled || !this.available) return;
     const clean = text.replace(/\s+/g, ' ').trim();
     if (!clean || clean === this.last) return;

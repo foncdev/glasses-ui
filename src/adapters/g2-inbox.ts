@@ -6,6 +6,7 @@
  * 목록 칸에는 밝기를 따로 줄 수 없어서 안 읽은 것을 채움으로 가른다.
  */
 import { getTextWidth, pxTruncate } from '@evenrealities/pretext';
+import { msg } from '../core/i18n.js';
 import type {
   NoticeKind,
   NoticeView,
@@ -113,15 +114,15 @@ export function layoutNotifications(view: NotificationsView): NotificationsLayou
     const inner = cardW - 2 * inset;
     return {
       ...base,
-      footer: footer('●● 뒤로', ''),
+      footer: footer(msg().hintBack, ''),
       card: {
         x: (SCREEN_W - cardW) / 2, y: 70, w: cardW, h: boxHeight(4, 8, 1),
         padding: 8, border: { width: 1, color: 6, radius: 10 }, brightness: 3,
         text: [
           center('○', inner),
-          center('알림이 없습니다', inner),
+          center(msg().noNotificationsTitle, inner),
           '',
-          center('새 알림은 여기와 홈에 뜹니다', inner),
+          center(msg().noNotificationsHint, inner),
         ].join('\n'),
         capture: true,
       },
@@ -135,7 +136,7 @@ export function layoutNotifications(view: NotificationsView): NotificationsLayou
   const colW = SCREEN_W - colX - 6;
   const inner = colW - 2 * (6 + 1) - 6;
   const card = [
-    spread('새 알림', String(view.unread), inner),
+    spread(msg().newNotifications, String(view.unread), inner),
     ...view.counts.map((c) => spread(`${NOTICE_SHAPE[c.kind][0]}  ${c.label}`, String(c.count), inner)),
   ];
 
@@ -222,7 +223,7 @@ export function layoutNotice(view: NoticeView): NoticeLayout {
       border: { width: border, color: 8, radius: 12 }, brightness: 4,
       text: [
         // 딱 맞추면 반올림으로 넘쳐 스크롤바가 생긴다. 여유를 둔다.
-        spread(`${NOTICE_SHAPE[view.kind][0]}  ${view.label}`, '새 알림', inner - 24),
+        spread(`${NOTICE_SHAPE[view.kind][0]}  ${view.label}`, msg().newNotifications, inner - 24),
         pxTruncate(view.title || view.body, inner - 12),
       ].join('\n'),
     },

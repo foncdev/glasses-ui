@@ -16,6 +16,7 @@
  */
 import { getTextWidth, pxTruncate } from '@evenrealities/pretext';
 import type { SystemView } from '../core/glasses.js';
+import { msg } from '../core/i18n.js';
 import { SCREEN_W, center, gauge, spread } from './g2-home.js';
 import { type StatusParts, type TextBox, boxHeight, footer, statusParts } from './g2-inbox.js';
 
@@ -59,8 +60,8 @@ export function layoutSystem(view: SystemView): SystemLayout {
         padding: 8, border: { width: 1, color: 6, radius: 10 }, brightness: 3,
         text: [
           center('◌', inner),
-          center(view.notice ?? '읽는 중…', inner),
-          center('맥에서 terminal-agent를 실행하세요', inner),
+          center(view.notice ?? msg().reading, inner),
+          center(msg().runTerminalAgent, inner),
         ].join('\n'),
       },
     };
@@ -90,8 +91,8 @@ export function layoutSystem(view: SystemView): SystemLayout {
     return spread(pxTruncate(p.name, rightInner - 64), value, rightInner);
   });
   const right = [
-    spread('프로세스', 'CPU', rightInner),
-    ...(rows.length ? rows : ['읽지 못했습니다']),
+    spread(msg().procHeader, 'CPU', rightInner),
+    ...(rows.length ? rows : [msg().readFailed]),
   ];
 
   return {

@@ -10,6 +10,7 @@
  */
 import { getTextWidth, pxTruncate } from '@evenrealities/pretext';
 import type { CommandResultView, CommandsView } from '../core/glasses.js';
+import { msg } from '../core/i18n.js';
 import { type Box, SCREEN_W, center, listHeight, spread, spreadItem } from './g2-home.js';
 import { type StatusParts, type TextBox, boxHeight, footer, statusParts } from './g2-inbox.js';
 
@@ -19,7 +20,7 @@ const LIST_ITEM_PAD = 12;
 
 /** '90분', '2시간'처럼 짧게. */
 export function every(minutes: number): string {
-  return minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60}시간` : `${minutes}분`;
+  return minutes >= 60 && minutes % 60 === 0 ? msg().hourShort(minutes / 60) : msg().minShort(minutes);
 }
 
 /** 가운데 안내 카드. 목록이 없을 때와 실행 중일 때 쓴다. 조작을 받는다. */
@@ -49,9 +50,9 @@ export function layoutCommands(view: CommandsView): CommandsLayout {
   if (view.rows.length === 0) {
     return {
       ...base,
-      footer: footer('●● 뒤로', ''),
+      footer: footer(msg().hintBack, ''),
       card: {
-        ...noticeCard([CMD_GLYPH.once, '등록한 명령이 없습니다', '', '폰이나 웹에서 등록하면 여기 뜹니다']),
+        ...noticeCard([CMD_GLYPH.once, msg().noCommandsTitle, '', msg().noCommandsHint]),
         capture: true,
       },
     };
@@ -64,15 +65,15 @@ export function layoutCommands(view: CommandsView): CommandsLayout {
   const colW = SCREEN_W - colX - 6;
   const inner = colW - 2 * (6 + 1) - 6;
   const card = [
-    spread(`${CMD_GLYPH.once}  직접`, String(view.counts.once), inner),
-    spread(`${CMD_GLYPH.cron}  예약`, String(view.counts.cron), inner),
+    spread(`${CMD_GLYPH.once}  ${msg().cmdOnce}`, String(view.counts.once), inner),
+    spread(`${CMD_GLYPH.cron}  ${msg().cmdCron}`, String(view.counts.cron), inner),
   ];
   if (view.last) {
     const ok = view.last.exitCode === 0;
     card.push(
       '',
       pxTruncate(view.last.label, inner),
-      spread(`${ok ? CMD_GLYPH.ok : CMD_GLYPH.fail}  종료 ${view.last.exitCode}`, view.last.ago, inner),
+      spread(`${ok ? CMD_GLYPH.ok : CMD_GLYPH.fail}  ${msg().exitCode(view.last.exitCode)}`, view.last.ago, inner),
     );
   }
 
@@ -115,7 +116,7 @@ export function layoutCommandResult(view: CommandResultView): CommandResultLayou
   };
 
   if (view.state === 'running') {
-    return { ...base, card: noticeCard([CMD_GLYPH.running, '실행 중…', `$ ${view.command}`], true) };
+    return { ...base, card: noticeCard([CMD_GLYPH.running, msg().running, `$ ${view.command}`], true) };
   }
 
   const cardW = SCREEN_W - 12;
@@ -126,7 +127,7 @@ export function layoutCommandResult(view: CommandResultView): CommandResultLayou
     const border = 2;
     const inner = cardW - 2 * (pad + border) - 6;
     const lines = [
-      `${CMD_GLYPH.confirm}  되돌릴 수 없는 명령입니다`,
+      `${CMD_GLYPH.confirm}  ${msg().irreversible}`,
       pxTruncate(`$ ${view.command}`, inner),
       ...view.lines.slice(0, 3).map((l) => pxTruncate(`· ${l}`, inner)),
     ];
@@ -144,12 +145,12 @@ export function layoutCommandResult(view: CommandResultView): CommandResultLayou
   // 될지 몰라 안내 줄이 밀리므로 줄마다 폭에 맞춰 자른다. 원래 줄바꿈은
   // 살린다 — 표 꼴 출력(ps·df)은 줄이 곧 뜻이다.
   const inner = cardW - 2 * (8 + 1) - 6;
-  const all = view.lines.length ? view.lines : ['(출력 없음)'];
+  const all = view.lines.length ? view.lines : [msg().noOutput];
   const fitsAll = all.length <= RESULT_ROWS;
   const shown = all.slice(0, fitsAll ? RESULT_ROWS : RESULT_ROWS - 1);
   const body = shown.map((l) => pxTruncate(l.replace(/\t/g, '  '), inner) || ' ');
   if (!fitsAll) {
-    const more = `… ${all.length - shown.length}줄 더 · 폰에서 보기`;
+    const more = msg().moreLines(all.length - shown.length);
     body.push(' '.repeat(Math.max(0, Math.floor((inner - getTextWidth(more)) / getTextWidth(' ')))) + more);
   }
   const failed = view.state === 'failed';

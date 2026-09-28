@@ -6,6 +6,7 @@
  */
 import { pxTruncate } from '@evenrealities/pretext';
 import type { HistoryView, LineKind, LiveView, PermissionView } from '../core/glasses.js';
+import { msg } from '../core/i18n.js';
 import { type Box, SCREEN_W, listHeight, spread, spreadItem } from './g2-home.js';
 import { SESSION_GLYPH } from './g2-sessions.js';
 import { type StatusParts, type TextBox, boxHeight, footer, statusParts } from './g2-inbox.js';
@@ -124,7 +125,7 @@ export function layoutPermission(view: PermissionView): PermissionLayout {
       border: { width: border, color: 8, radius: 10 }, brightness: 4,
       text: [
         spread(`◆  ${view.tool}`, view.hint, inner - 12),
-        pxTruncate(view.summary ? `$ ${view.summary}` : '(내용 없음)', inner - 6),
+        pxTruncate(view.summary ? `$ ${view.summary}` : msg().noContent, inner - 6),
       ].join('\n'),
     },
     list: {

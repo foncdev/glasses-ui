@@ -51,6 +51,7 @@ import {
   type PhoneEvent,
   type PhoneStatus,
 } from './phone.js';
+import { msg } from './i18n.js';
 
 /**
  * 화면 구성.
@@ -106,27 +107,62 @@ export function toolBrief(input: unknown): string {
   return '';
 }
 
-export function timeAgo(iso: string | undefined, now = Date.now()): string {
+type Elapsed = { unit: 'now' | 'min' | 'hour' | 'yesterday' | 'day'; n: number };
+
+function elapsed(iso: string | undefined, now: number): Elapsed | null {
   const t = iso ? Date.parse(iso) : NaN;
-  if (Number.isNaN(t)) return '';
+  if (Number.isNaN(t)) return null;
   const min = Math.floor((now - t) / 60_000);
-  if (min < 1) return '방금';
-  if (min < 60) return `${min}분`;
+  if (min < 1) return { unit: 'now', n: 0 };
+  if (min < 60) return { unit: 'min', n: min };
   const hour = Math.floor(min / 60);
-  if (hour < 24) return `${hour}시간`;
+  if (hour < 24) return { unit: 'hour', n: hour };
   const day = Math.floor(hour / 24);
-  return day === 1 ? '어제' : `${day}일`;
+  return day === 1 ? { unit: 'yesterday', n: 1 } : { unit: 'day', n: day };
 }
 
+export function timeAgo(iso: string | undefined, now = Date.now()): string {
+  const e = elapsed(iso, now);
+  if (!e) return '';
+  const m = msg();
+  switch (e.unit) {
+    case 'now':
+      return m.justNow;
+    case 'min':
+      return m.minShort(e.n);
+    case 'hour':
+      return m.hourShort(e.n);
+    case 'yesterday':
+      return m.yesterday;
+    default:
+      return m.dayShort(e.n);
+  }
+}
+
+/**
+ * '12분 전'처럼 문장으로. 방금·어제는 '전'을 붙이지 않는다.
+ * tight면 좁은 카드용으로 줄인다(영어는 '12m ago' 대신 '12m').
+ */
+export function agoPhrase(iso: string | undefined, now = Date.now(), tight = false): string {
+  const e = elapsed(iso, now);
+  if (!e) return '';
+  const m = msg();
+  if (e.unit === 'now') return m.justNow;
+  if (e.unit === 'yesterday') return m.yesterdayAgo;
+  const short = timeAgo(iso, now);
+  return tight ? m.agoTight(short) : m.ago(short);
+}
+
+/** 메뉴 글은 그릴 때 고른다. 언어를 바꾸면 바로 따라가게. */
 const MENU = [
-  { label: '에이전트', screen: 'sessions' as const },
-  { label: '알림 보기', screen: 'notifications' as const },
-  { label: '체크 보기', screen: 'checklist' as const },
-  { label: '시스템', screen: 'system' as const },
-  { label: '명령', screen: 'commands' as const },
-  { label: '타이머 · 물', screen: 'phone' as const },
-  { label: '설정', screen: 'settings' as const },
-];
+  { label: 'menuAgents', screen: 'sessions' as const },
+  { label: 'menuNotifications', screen: 'notifications' as const },
+  { label: 'menuChecklist', screen: 'checklist' as const },
+  { label: 'menuSystem', screen: 'system' as const },
+  { label: 'menuCommands', screen: 'commands' as const },
+  { label: 'menuPhone', screen: 'phone' as const },
+  { label: 'menuSettings', screen: 'settings' as const },
+] as const;
 
 /**
  * 홈에서 더블탭하면 뜨는 선택지.
@@ -135,7 +171,7 @@ const MENU = [
  * 카카오톡·전화 같은 시스템 알림을 가려서, 안 쓸 때 빠르게 나갈 길이 필요했다.
  * 화면 끄기가 가장 흔하므로 맨 위에 둔다.
  */
-const HOME_MENU = ['화면 꺼짐', '종료하기', '취소'] as const;
+const HOME_MENU = ['screenOff', 'exit', 'cancel'] as const;
 
 /**
  * 화면이 꺼지기까지의 시간 선택지.
@@ -256,7 +292,7 @@ export function noticeView(
     }
   }
 
-  lines.push('', `${Math.round(ms / 1000)}초 후 닫힘 · 탭: 닫기`);
+  lines.push('', msg().closeHintShort(Math.round(ms / 1000)));
   return lines.join('\n');
 }
 
@@ -304,8 +340,9 @@ export function systemView(
   sys: SysSummary | undefined,
   procs: readonly SysProc[],
 ): { header: string; items: string[] } {
+  const m = msg();
   if (!sys) {
-    return { header: '시스템 · 더블탭 뒤로', items: ['읽는 중…'] };
+    return { header: m.withBack(m.system), items: [m.reading] };
   }
 
   // 못 구한 값은 칸을 비운다. -1이나 0을 그대로 보여주면 오해한다.
@@ -314,15 +351,15 @@ export function systemView(
     sys.memTotalGB > 0
       ? `MEM ${sys.memUsedGB.toFixed(1)}/${Math.round(sys.memTotalGB)}G`
       : 'MEM —';
-  const load = sys.load.length > 0 ? `로드 ${sys.load[0].toFixed(1)}` : '';
+  const load = sys.load.length > 0 ? m.load(sys.load[0].toFixed(1)) : '';
 
-  const items = [[cpu, mem].join('  '), [load, sys.uptime ? `가동 ${sys.uptime}` : '']
+  const items = [[cpu, mem].join('  '), [load, sys.uptime ? m.uptime(sys.uptime) : '']
     .filter(Boolean)
     .join(' · ')].filter(Boolean);
 
   if (procs.length === 0) {
-    items.push('', '프로세스를 읽지 못했습니다');
-    return { header: '시스템 · 더블탭 뒤로', items };
+    items.push('', m.procsReadFailed);
+    return { header: m.withBack(m.system), items };
   }
 
   items.push('');
@@ -340,7 +377,7 @@ export function systemView(
     items.push(name + ' '.repeat(gap) + pct);
   }
 
-  return { header: `${sys.host || '시스템'} · 더블탭 뒤로`, items };
+  return { header: m.withBack(sys.host || m.system), items };
 }
 
 /** 시스템 화면 한 줄의 칸 수. */
@@ -358,7 +395,8 @@ const SYS_COLS = 38;
 export function resultView(
   r: { label: string; text: string; awaitingConfirm?: boolean } | undefined,
 ): string {
-  if (!r) return '결과가 없습니다\n\n더블탭: 뒤로';
+  const m = msg();
+  if (!r) return m.noResult;
 
   /*
    * 줄을 아낀다.
@@ -368,7 +406,7 @@ export function resultView(
    * 머리말에 갈래를, 이름에 무엇을 돌렸는지 담아 두 줄로 끝낸다.
    */
   const lines = [
-    `${r.awaitingConfirm ? '! 확인 필요' : '* 실행 결과'} · ${clampWidth(r.label, 24)}`,
+    `${r.awaitingConfirm ? m.resultMarkConfirm : m.resultMarkDone} · ${clampWidth(r.label, 24)}`,
     '',
   ];
 
@@ -379,10 +417,10 @@ export function resultView(
     lines.push(clampWidth(line.replace(/\t/g, ' '), RESULT_COLS));
   }
   if (r.text.split('\n').length > RESULT_ROWS) {
-    lines.push('…(폰에서 전문 보기)');
+    lines.push(m.resultMore);
   }
 
-  lines.push('', r.awaitingConfirm ? '탭: 실행 · 더블탭: 취소' : '더블탭: 뒤로');
+  lines.push('', r.awaitingConfirm ? m.resultTapRun : m.doubleTapBack);
   return lines.join('\n');
 }
 
@@ -407,10 +445,10 @@ const NOTICE_BODY_ROWS = 3;
  * 가장 위(커서 기본 위치)에 가장 안전한 선택을 둬서 실수로 승인되지 않게 한다.
  */
 const PERMISSION_CHOICES = [
-  { label: '거부', behavior: 'deny' as const, always: false },
-  { label: '허용 (이번만)', behavior: 'allow' as const, always: false },
-  { label: '허용 (이 세션 계속)', behavior: 'allow' as const, always: true },
-];
+  { label: 'permDeny', behavior: 'deny' as const, always: false },
+  { label: 'permOnce', behavior: 'allow' as const, always: false },
+  { label: 'permAlways', behavior: 'allow' as const, always: true },
+] as const;
 
 const STORE_VOICE = 'voice.enabled';
 const STORE_IDLE = 'screen.idleMs';
@@ -608,7 +646,7 @@ export class GlassesUI {
     agentCli.onUnauthorized(() => {
       if (!this.loggedIn) return;
       this.loggedIn = false;
-      void this.glasses.showText('로그인이 풀렸습니다.\n\n폰에서 다시 로그인해 주세요.').catch(() => undefined);
+      void this.glasses.showText(msg().loggedOut).catch(() => undefined);
     });
     this.watchServerData();
     this.watchPhone();
@@ -633,7 +671,7 @@ export class GlassesUI {
     // 화면이 바뀌다 만 채로 멈추므로 여기서 받아 로그로 남긴다.
     this.glasses.onGesture((e) => {
       void this.handleGesture(e).catch((err: Error) => {
-        this.log(`조작 처리 오류: ${err.message}`, 'error');
+        this.log(msg().gestureError(err.message), 'error');
       });
     });
 
@@ -656,7 +694,7 @@ export class GlassesUI {
     try {
       await agentCli.listNotifications();
     } catch {
-      await this.glasses.showText('연결 중…\n\n폰에서 인증을 마쳐 주세요.');
+      await this.glasses.showText(msg().connectingAuth);
       return;
     }
 
@@ -774,7 +812,7 @@ export class GlassesUI {
 
   /** 타이머·물 조작을 폰에 보내고 바뀐 상태로 다시 그린다. */
   private async runPhoneAction(action: PhoneAction): Promise<void> {
-    const before = this.phone ? phoneActions(this.phone).map((a) => a.label).join('|') : '';
+    const before = this.phone ? phoneActions(this.phone).map((a) => a.id).join('|') : '';
     try {
       const next = action.timer
         ? await agentCli.phoneTimer(action.timer.action, action.timer.minutes)
@@ -784,11 +822,11 @@ export class GlassesUI {
       this.phoneAt = Date.now();
       this.log(action.label, 'ok');
     } catch (err) {
-      this.log(`${action.label} 실패: ${(err as Error).message}`, 'warn');
+      this.log(msg().actionFailed(action.label, (err as Error).message), 'warn');
       return;
     }
     // 줄이 바뀌면(시작 → 멈춤…) 목록을 다시 세워 선택이 첫 줄로 간다. 커서도 맞춘다.
-    const after = phoneActions(this.phone).map((a) => a.label).join('|');
+    const after = phoneActions(this.phone).map((a) => a.id).join('|');
     if (after !== before) this.phoneCursor = 0;
     this.glasses.setTopBar?.(timerRatio(this.phone.timer, this.phoneAt, this.phoneAt));
     this.lastPhoneLabel = this.phoneLabel();
@@ -797,20 +835,21 @@ export class GlassesUI {
 
   private noticePhone(event: PhoneEvent, status: PhoneStatus): void {
     this.wake();
+    const m = msg();
     if (event === 'timerDone') {
-      this.glasses.speak('타이머가 끝났습니다');
+      this.glasses.speak(m.speakTimerDone);
       this.showNotice({
-        title: '타이머 종료',
-        text: `${durationLabel(status.timer.duration)} 타이머가 끝났습니다.`,
-        label: '타이머',
+        title: m.timerDoneTitle,
+        text: m.timerDoneText(durationLabel(status.timer.duration)),
+        label: m.timerLabel,
         kind: 'done',
       });
     } else {
-      this.glasses.speak('물 마실 시간입니다');
+      this.glasses.speak(m.speakWater);
       this.showNotice({
-        title: '물 마실 시간',
-        text: `오늘 ${status.water.count}/${status.water.goal}잔 · 폰에서 [마셨어요]`,
-        label: '물 마시기',
+        title: m.waterTitle,
+        text: m.waterText(status.water.count, status.water.goal),
+        label: m.waterLabel,
         kind: 'info',
       });
     }
@@ -934,14 +973,19 @@ export class GlassesUI {
   }
 
   private statusText(raw: string): string {
+    const m = msg();
     return (
-      {
-        busy: '작업 중',
-        waiting: '승인 대기',
-        idle: '대기',
-        starting: '준비 중',
-        closed: '종료됨',
-      }[raw] ?? raw
+      (
+        {
+          busy: m.stateBusy,
+          waiting: m.stateWaiting,
+          idle: m.stateIdle,
+          starting: m.stateStarting,
+          closed: m.stateClosed,
+          error: m.stateError,
+          done: m.stateDone,
+        } as Record<string, string>
+      )[raw] ?? raw
     );
   }
 
@@ -965,7 +1009,7 @@ export class GlassesUI {
     const done = this.checklist.filter((i) => i.done).length;
     const meta: Record<string, string> = {
       sessions: this.sessions.length > 0 ? String(this.sessions.length) : '',
-      notifications: this.unread > 0 ? `${this.unread} new` : '',
+      notifications: this.unread > 0 ? msg().homeUnread(this.unread) : '',
       checklist: this.checklist.length > 0 ? `${done} / ${this.checklist.length}` : '',
       commands: this.snippets.length > 0 ? String(this.snippets.length) : '',
     };
@@ -973,7 +1017,7 @@ export class GlassesUI {
     // 타이머·물이 있으면 자리가 모자라 연결 표시는 점만 남긴다.
     const phone = this.phoneLabel();
     const status = [
-      busy > 0 ? `작업 ${busy}` : '',
+      busy > 0 ? msg().busyCount(busy) : '',
       phone,
       phone ? (this.sseDown ? '○' : '●') : this.sseDown ? '○ offline' : '● online',
       clock(),
@@ -1001,7 +1045,7 @@ export class GlassesUI {
     return {
       title: '$ relay ~/home',
       status,
-      items: MENU.map((m) => ({ label: m.label, meta: meta[m.screen] ?? '' })),
+      items: MENU.map((m) => ({ label: msg()[m.label], meta: meta[m.screen] ?? '' })),
       logo: this.showLogo ? this.glasses.logo : undefined,
       gauges,
     };
@@ -1016,9 +1060,10 @@ export class GlassesUI {
    * 오른쪽 카드에 두어 글자만 고친다.
    */
   private sessionsView(): SessionsView {
+    const m = msg();
     const all = this.sessions.map((s) => ({
       state: this.statusOf(s),
-      title: s.title || '새 대화',
+      title: s.title || m.newChat,
       meta: timeAgo(s.lastActivityAt),
     }));
     const rows = all.slice(0, LIST_MAX);
@@ -1028,18 +1073,18 @@ export class GlassesUI {
 
     return {
       title: '$ relay ~/agents',
-      status: [busy > 0 ? `작업 ${busy}` : '', approvals > 0 ? `◆ 승인 ${approvals}` : '', clock()]
+      status: [busy > 0 ? m.busyCount(busy) : '', approvals > 0 ? m.approvals(approvals) : '', clock()]
         .filter(Boolean)
         .join('   '),
       rows,
       counts: [
-        { state: 'running', label: '작업 중', count: busy },
-        { state: 'pending', label: '승인 요청', count: approvals },
-        { state: 'idle', label: '대기', count: count('idle', 'done') },
-        { state: 'offline', label: '종료', count: count('offline') },
+        { state: 'running', label: m.countRunning, count: busy },
+        { state: 'pending', label: m.countPending, count: approvals },
+        { state: 'idle', label: m.countIdle, count: count('idle', 'done') },
+        { state: 'offline', label: m.countOffline, count: count('offline') },
       ],
-      hint: '● 열기    ●● 뒤로',
-      total: `세션 ${rows.length}개`,
+      hint: m.hintOpenBack,
+      total: m.sessionsTotal(rows.length),
     };
   }
 
@@ -1058,20 +1103,21 @@ export class GlassesUI {
     }));
     // 갈래별 수는 목록에 안 보이는 것까지 센다.
     const unreadOf = (k: NoticeKind) => this.notifications.filter((n) => n.kind === k && !n.readAt).length;
+    const m = msg();
     return {
       title: '$ relay ~/inbox',
-      status: [this.unread > 0 ? `● 새 ${this.unread}` : '', clock()].filter(Boolean).join('   '),
+      status: [this.unread > 0 ? m.unreadStatus(this.unread) : '', clock()].filter(Boolean).join('   '),
       rows,
       counts: [
-        { kind: 'error', label: '오류', count: unreadOf('error') },
-        { kind: 'permission', label: '권한', count: unreadOf('permission') },
-        { kind: 'done', label: '완료', count: unreadOf('done') },
-        { kind: 'info', label: '정보', count: unreadOf('info') },
+        { kind: 'error', label: m.kindError, count: unreadOf('error') },
+        { kind: 'permission', label: m.kindPermission, count: unreadOf('permission') },
+        { kind: 'done', label: m.kindDone, count: unreadOf('done') },
+        { kind: 'info', label: m.kindInfo, count: unreadOf('info') },
       ],
       unread: this.unread,
-      action: rows.length > 0 ? '모두 읽음 처리' : undefined,
-      hint: '● 열기    ●● 뒤로',
-      legend: '채움 = 안 읽음',
+      action: rows.length > 0 ? m.markAllRead : undefined,
+      hint: m.hintOpenBack,
+      legend: m.legendUnread,
     };
   }
 
@@ -1080,15 +1126,15 @@ export class GlassesUI {
    */
   private notificationView(n: Notification | null): NotificationView {
     const kind: NoticeKind = n?.kind ?? 'info';
-    const ago = n?.createdAt ? timeAgo(n.createdAt) : '';
+    const m = msg();
     return {
       title: n?.id ? '$ relay ~/inbox' : '$ relay ~/history',
-      status: [ago ? (ago === '방금' ? ago : `${ago} 전`) : '', clock()].filter(Boolean).join('   '),
+      status: [n?.createdAt ? agoPhrase(n.createdAt) : '', clock()].filter(Boolean).join('   '),
       kind,
-      label: { done: '완료', error: '오류', permission: '권한', info: '정보' }[kind],
-      heading: n?.title ?? '알림',
-      body: n?.body?.trim() || '(내용 없음)',
-      hint: '● 닫기    ●● 뒤로',
+      label: this.kindLabel(kind),
+      heading: n?.title ?? m.kindNotification,
+      body: n?.body?.trim() || m.noContent,
+      hint: m.hintCloseBack,
     };
   }
 
@@ -1099,14 +1145,15 @@ export class GlassesUI {
   private checklistView(): ChecklistView {
     const done = this.checklist.filter((i) => i.done).length;
     const s = this.sessions.find((x) => x.id === this.activeId);
+    const m = msg();
     return {
-      title: this.checkGlobal ? '$ ~/todo' : `$ ~/${s?.title || '새 대화'}/todo`,
+      title: this.checkGlobal ? '$ ~/todo' : `$ ~/${s?.title || m.newChat}/todo`,
       status: [`${done} / ${this.checklist.length}`, clock()].join('   '),
       items: this.shownChecklist().map((i) => ({ done: i.done, text: i.text })),
-      action: this.checklist.length > 0 ? '완료 항목 치우기' : undefined,
+      action: this.checklist.length > 0 ? m.clearDone : undefined,
       progress: { done, total: this.checklist.length },
-      hint: '● 체크    ●● 뒤로',
-      note: '폰·웹에서 추가',
+      hint: m.hintCheckBack,
+      note: m.addOnPhoneWeb,
     };
   }
 
@@ -1117,36 +1164,37 @@ export class GlassesUI {
     const last = this.snippets
       .filter((x) => x.lastRunAt && x.lastExitCode !== undefined)
       .sort((a, b) => (b.lastRunAt! > a.lastRunAt! ? 1 : -1))[0];
-    const ago = last ? timeAgo(last.lastRunAt) : '';
+    const m = msg();
     return {
       title: '$ ~/cmd',
-      status: [cron > 0 ? `예약 ${cron}` : '', clock()].filter(Boolean).join('   '),
+      status: [cron > 0 ? m.cronCount(cron) : '', clock()].filter(Boolean).join('   '),
       rows: this.shownSnippets().map((x) => ({
         label: x.label,
         ...(x.kind === 'cron' && x.everyMinutes ? { cron: x.everyMinutes } : {}),
       })),
       counts: { once: this.snippets.length - cron, cron },
-      last: last ? { label: last.label, exitCode: last.lastExitCode!, ago: ago === '방금' ? ago : `${ago} 전` } : undefined,
-      hint: '● 실행    ●● 뒤로',
-      note: '폰·웹에서 등록',
+      last: last ? { label: last.label, exitCode: last.lastExitCode!, ago: agoPhrase(last.lastRunAt, Date.now(), true) } : undefined,
+      hint: m.hintRunBack,
+      note: m.registerOnPhoneWeb,
     };
   }
 
   /** 실행 결과에 그릴 것. 종료 코드와 걸린 시간은 상태 표시줄로 올린다. */
   private commandResultView(r: NonNullable<GlassesUI['cmdResult']>): CommandResultView {
     const state = r.state ?? (r.awaitingConfirm ? 'confirm' : 'done');
+    const m = msg();
     let status = clock();
     if (state === 'done') {
       const ok = r.exitCode === 0 && !r.timedOut;
       // 금방 끝난 명령은 '0.0초'로 보여 멈춘 것처럼 읽힌다.
       const took =
-        r.tookMs === undefined ? '' : r.tookMs < 100 ? ' · 0.1초 미만' : ` · ${(r.tookMs / 1000).toFixed(1)}초`;
-      const exit = r.timedOut ? '시간 초과' : `종료 ${r.exitCode ?? '?'}`;
+        r.tookMs === undefined ? '' : r.tookMs < 100 ? ` · ${m.tookUnder}` : ` · ${m.secShort((r.tookMs / 1000).toFixed(1))}`;
+      const exit = r.timedOut ? m.timedOut : m.exitCode(r.exitCode ?? '?');
       status = `${ok ? '◎' : '◇'} ${exit}${took}   ${clock()}`;
     } else if (state === 'failed') {
-      status = `◇ 실패   ${clock()}`;
+      status = `◇ ${m.failed}   ${clock()}`;
     } else if (state === 'confirm') {
-      status = `▲ 확인 필요   ${clock()}`;
+      status = `▲ ${m.confirmNeeded}   ${clock()}`;
     }
     return {
       title: `$ ${r.label}`,
@@ -1154,7 +1202,7 @@ export class GlassesUI {
       state,
       command: r.command ?? '',
       lines: r.lines ?? r.text.split('\n'),
-      hint: state === 'confirm' ? '● 그래도 실행    ●● 취소' : '●● 목록으로',
+      hint: state === 'confirm' ? m.hintRunAnyway : m.hintBackToList,
       note: state === 'done' ? r.command ?? '' : '',
     };
   }
@@ -1164,7 +1212,8 @@ export class GlassesUI {
     const sys = this.sys;
     const at = this.sysReadAt;
     // 탭해서 다시 읽어도 같은 분이면 달라진 게 없어 보인다. 초까지 적는다.
-    const read = at ? `읽음 ${clock(at)}:${String(at.getSeconds()).padStart(2, '0')}` : '';
+    const m = msg();
+    const read = at ? m.readAt(`${clock(at)}:${String(at.getSeconds()).padStart(2, '0')}`) : '';
     return {
       title: '$ ~/sys',
       status: read || clock(),
@@ -1177,41 +1226,41 @@ export class GlassesUI {
           }
         : undefined,
       procs: this.procs.map((p) => ({ name: p.name, cpu: p.cpu >= 0 ? p.cpu : null })),
-      notice: sys ? undefined : this.sysError ?? '읽는 중…',
-      hint: '● 새로 읽기    ●● 뒤로',
+      notice: sys ? undefined : this.sysError ?? m.reading,
+      hint: m.hintRefreshBack,
       note: (sys?.host ?? '').replace(/\.local$/, ''),
     };
   }
 
   /** 세션 상태를 사람 말로. 상태 표시줄과 카드에 쓴다. */
   private sessionStateLabel(s: SessionInfo | undefined): string {
-    if (s && !s.live) return '종료됨';
-    if (this.pending) return '승인 대기';
+    if (s && !s.live) return msg().stateClosed;
+    if (this.pending) return msg().stateWaiting;
     return this.statusText(this.status || s?.status || 'idle');
   }
 
   /** 대화 목록에 그릴 것. 오른쪽 카드는 세션 정보라 고른 줄과 상관없다. */
   private historyView(s: SessionInfo | undefined): HistoryView {
-    const ago = s?.lastActivityAt ? timeAgo(s.lastActivityAt) : '';
+    const m = msg();
     return {
-      title: `$ ~/${s?.title || '새 대화'}`,
+      title: `$ ~/${s?.title || m.newChat}`,
       status: clock(),
       rows: this.shownHistory().map((h) => ({
         kind: h.kind,
-        text: h.full.replace(/\n/g, ' ').trim() || '(내용 없음)',
+        text: h.full.replace(/\n/g, ' ').trim() || m.noContent,
       })),
-      action: '대화 이어서 보기',
+      action: m.continueChat,
       info: {
         state: s ? this.statusOf(s) : 'idle',
         label: this.sessionStateLabel(s),
         rows: [
-          { label: '턴', value: String(s?.turns ?? 0) },
-          { label: '비용', value: `$${(s?.totalCostUsd ?? 0).toFixed(2)}` },
-          { label: '폴더', value: s?.cwd ? (s.cwd.split(/[\\/]/).filter(Boolean).pop() ?? '') : '' },
-          { label: '활동', value: ago ? (ago === '방금' ? ago : `${ago} 전`) : '' },
+          { label: m.infoTurns, value: String(s?.turns ?? 0) },
+          { label: m.infoCost, value: `$${(s?.totalCostUsd ?? 0).toFixed(2)}` },
+          { label: m.infoFolder, value: s?.cwd ? (s.cwd.split(/[\\/]/).filter(Boolean).pop() ?? '') : '' },
+          { label: m.infoActivity, value: s?.lastActivityAt ? agoPhrase(s.lastActivityAt) : '' },
         ],
       },
-      hint: '● 전문 보기    ●● 뒤로',
+      hint: m.hintFullBack,
     };
   }
 
@@ -1220,47 +1269,45 @@ export class GlassesUI {
     const closed = Boolean(s && !s.live);
     const busy = !closed && this.status === 'busy';
     const secs = this.activityAt ? Math.max(0, Math.floor((Date.now() - this.activityAt) / 1000)) : 0;
+    const m = msg();
     return {
-      title: `$ ~/${s?.title || '새 대화'}`,
+      title: `$ ~/${s?.title || m.newChat}`,
       status: [this.sessionStateLabel(s), clock()].join('   '),
       lines: this.feed.slice(-6),
       activity: busy
         ? {
-            text: [this.activity || '작업 중', this.activityDetail].filter(Boolean).join('  '),
-            elapsed: this.activityAt ? (secs < 60 ? `${secs}초` : `${Math.floor(secs / 60)}분`) : '',
+            text: [this.activity || m.stateBusy, this.activityDetail].filter(Boolean).join('  '),
+            elapsed: this.activityAt ? (secs < 60 ? m.secShort(secs) : m.minShort(Math.floor(secs / 60))) : '',
             tick: this.tick,
           }
         : undefined,
-      idle: closed ? '종료됨  ·  탭하면 이어가기' : `${this.sessionStateLabel(s)}  ·  탭하면 할 일`,
-      hint: closed ? '● 이어가기    ●● 뒤로' : '● 할 일    ●● 뒤로',
-      meta: s ? `턴 ${s.turns}  ·  $${s.totalCostUsd.toFixed(2)}` : '',
+      idle: closed ? m.endedTapResume : m.stateTapTodo(this.sessionStateLabel(s)),
+      hint: closed ? m.hintResumeBack : m.hintTodoBack,
+      meta: s ? `${m.turns(s.turns)}  ·  $${s.totalCostUsd.toFixed(2)}` : '',
     };
   }
 
   /** 권한 요청에 그릴 것. 선택지 순서는 PERMISSION_CHOICES와 같다(거부가 맨 앞). */
   private permissionView(p: { toolName: string; summary: string }): PermissionView {
     const s = this.sessions.find((x) => x.id === this.activeId);
+    const m = msg();
     return {
-      title: `$ ~/${s?.title || '새 대화'}`,
-      status: ['◆ 권한 요청', clock()].join('   '),
+      title: `$ ~/${s?.title || m.newChat}`,
+      status: [m.permRequest, clock()].join('   '),
       tool: p.toolName,
       summary: p.summary.replace(/\n/g, ' ').trim(),
       choices: PERMISSION_CHOICES.map((c) => ({
         kind: c.behavior === 'deny' ? 'deny' : c.always ? 'always' : 'once',
-        label: c.label,
+        label: m[c.label],
       })),
-      hint: '더블탭 = 거부',
+      hint: m.permHint,
     };
   }
 
   private summary(): string {
     const busy = this.sessions.filter((s) => s.live && s.status === 'busy').length;
     const done = this.checklist.filter((i) => i.done).length;
-    return [
-      `세션 ${busy}/${this.sessions.length}`,
-      `알림 ${this.unread}`,
-      `체크 ${done}/${this.checklist.length}`,
-    ].join(' · ');
+    return msg().summary(busy, this.sessions.length, this.unread, done, this.checklist.length);
   }
 
   /**
@@ -1298,9 +1345,9 @@ export class GlassesUI {
     for (const e of this.history) {
       if (e.type !== 'user' && e.type !== 'assistant') continue;
       const full = String(e.text ?? '');
-      const who = e.type === 'user' ? '나' : 'AI';
+      const who = e.type === 'user' ? msg().me : 'AI';
       out.push({
-        line: `${who}> ${clamp(full.replace(/\n/g, ' ').trim() || '(내용 없음)', 34)}`,
+        line: `${who}> ${clamp(full.replace(/\n/g, ' ').trim() || msg().noContent, 34)}`,
         full,
         kind: e.type === 'user' ? 'me' : 'ai',
       });
@@ -1330,7 +1377,7 @@ export class GlassesUI {
     try {
       await this.glasses.reattach?.();
     } catch (err) {
-      this.log(`화면 복구 실패: ${(err as Error).message}`, 'warn');
+      this.log(msg().restoreFailed((err as Error).message), 'warn');
     }
 
     // 돌아왔으니 화면을 쓸 수 있다. 무조작 타이머도 다시 센다.
@@ -1351,8 +1398,9 @@ export class GlassesUI {
    * 제목을 다 읽기 전에 갈래부터 알아야 쓸모가 있다.
    */
   private labelFor(n: Notification): string {
-    if (n.kind === 'permission') return '* 권한';
-    if (n.kind === 'error') return '* 오류';
+    const m = msg();
+    if (n.kind === 'permission') return `* ${m.kindPermission}`;
+    if (n.kind === 'error') return `* ${m.kindError}`;
 
     /*
      * 에이전트 일인지는 세션이 붙어 있는지로 본다.
@@ -1360,11 +1408,17 @@ export class GlassesUI {
      * kind만 보면 안 된다. 외부 훅도 done을 보낼 수 있어서, 남의
      * 서비스가 보낸 성공 알림이 에이전트 작업으로 보였다.
      */
-    if (n.sessionId) return '* 에이전트';
+    if (n.sessionId) return `* ${m.kindAgent}`;
 
-    // 서버가 할 일 변경에 붙이는 제목이다.
-    if (n.title.startsWith('할 일') || n.title.startsWith('완료한 할 일')) return '* 할 일';
-    return '* 알림';
+    // 서버가 할 일 변경에 붙이는 제목이다. 서버가 만든 글이라 한국어로 견준다.
+    if (n.title.startsWith('할 일') || n.title.startsWith('완료한 할 일')) return `* ${m.kindTodo}`;
+    return `* ${m.kindNotification}`;
+  }
+
+  /** 알림 갈래의 이름. */
+  private kindLabel(kind: NoticeKind): string {
+    const m = msg();
+    return { done: m.kindDone, error: m.kindError, permission: m.kindPermission, info: m.kindInfo }[kind];
   }
 
   /**
@@ -1454,8 +1508,8 @@ export class GlassesUI {
           await this.glasses.showPermission(this.permissionView(p));
           return;
         }
-        await this.glasses.showList(`권한: ${clamp(p.toolName, 30)}`, [
-          ...PERMISSION_CHOICES.map((c) => c.label),
+        await this.glasses.showList(msg().permHeader(clamp(p.toolName, 30)), [
+          ...PERMISSION_CHOICES.map((c) => msg()[c.label]),
           ...(p.summary ? [`  ${clamp(p.summary.replace(/\n/g, ' '), 60)}`] : []),
         ]);
         return;
@@ -1471,7 +1525,7 @@ export class GlassesUI {
             label: n.label.replace(/^\*\s*/, ''),
             title: n.title.trim(),
             body: n.text.trim() === n.title.trim() ? '' : n.text.trim(),
-            closeHint: `${Math.round(this.noticeMs / 1000)}초 후 닫힘  ·  탭: 닫기`,
+            closeHint: msg().closeHint(Math.round(this.noticeMs / 1000)),
           });
           return;
         }
@@ -1491,7 +1545,7 @@ export class GlassesUI {
         // 로고를 끄면 패널 없이 목록이 화면을 다 쓴다.
         await this.glasses.showList(
           this.summary(),
-          MENU.map((m) => m.label),
+          MENU.map((m) => msg()[m.label]),
           // 로고 아트는 기기마다 달라 어댑터가 갖는다.
           this.showLogo ? this.glasses.logo : undefined,
         );
@@ -1504,15 +1558,16 @@ export class GlassesUI {
           await this.glasses.showSessions(this.sessionsView());
           return;
         }
+        const m = msg();
         const items: Item[] = this.shownSessions().map((s) => ({
-          text: s.title || '새 대화',
+          text: s.title || m.newChat,
           state: this.statusOf(s),
         }));
-        if (items.length === 0) items.push({ text: '(연결된 세션이 없습니다)' });
+        if (items.length === 0) items.push({ text: m.noSessionsRow });
         const busy = this.sessions.filter((s) => s.live && s.status === 'busy').length;
-        const parts = [`세션 ${this.sessions.length}`];
-        if (busy > 0) parts.push(`작업중 ${busy}`);
-        await this.glasses.showList(`${parts.join(' · ')} · 더블탭 뒤로`, items);
+        const parts = [m.sessionsHeader(this.sessions.length)];
+        if (busy > 0) parts.push(m.busyHeader(busy));
+        await this.glasses.showList(m.withBack(parts.join(' · ')), items);
         return;
       }
 
@@ -1525,10 +1580,11 @@ export class GlassesUI {
         }
         const items = this.shownHistory().map((h) => h.line);
         // 리스트는 비어 있으면 만들 수 없다.
-        if (items.length === 0) items.push('(주고받은 기록이 없습니다)');
+        const m = msg();
+        if (items.length === 0) items.push(m.noHistoryRow);
         // 진행 상황을 보거나 말을 거는 자리는 항상 맨 아래에 둔다.
-        items.push('> 대화 이어서 보기');
-        await this.glasses.showList(`${clamp(s?.title || '세션', 30)} · 더블탭 뒤로`, items);
+        items.push(`> ${m.continueChat}`);
+        await this.glasses.showList(m.withBack(clamp(s?.title || m.session, 30)), items);
         return;
       }
 
@@ -1542,10 +1598,11 @@ export class GlassesUI {
           text: n.title,
           state: n.readAt ? 'read' : 'unread',
         }));
-        if (items.length === 0) items.push({ text: '(알림이 없습니다)' });
-        else items.push({ text: '모두 읽음 처리' });
+        const m = msg();
+        if (items.length === 0) items.push({ text: m.noNotificationsRow });
+        else items.push({ text: m.markAllRead });
         await this.glasses.showList(
-          `알림 ${this.unread}/${this.notifications.length} · 더블탭 뒤로`,
+          m.withBack(m.notificationsHeader(this.unread, this.notifications.length)),
           items,
         );
         return;
@@ -1560,10 +1617,10 @@ export class GlassesUI {
         }
         await this.glasses.showText(
           [
-            clamp(n?.title ?? '알림', 46),
-            `─ ${this.notifTime(n)} · 더블탭 뒤로`,
+            clamp(n?.title ?? msg().kindNotification, 46),
+            `─ ${msg().withBack(this.notifTime(n))}`,
             '',
-            clamp(n?.body || '(내용 없음)', 320),
+            clamp(n?.body || msg().noContent, 320),
           ].join('\n'),
         );
         return;
@@ -1586,17 +1643,15 @@ export class GlassesUI {
           await this.glasses.showCommands(this.commandsView());
           return;
         }
+        const m = msg();
         if (this.snippets.length === 0) {
-          await this.glasses.showList('명령 · 더블탭 뒤로', [
-            '등록된 명령이 없습니다',
-            '웹에서 먼저 등록하세요',
-          ]);
+          await this.glasses.showList(m.withBack(m.menuCommands), [m.noCommandsRow, m.registerOnWebRow]);
           return;
         }
         await this.glasses.showList(
-          `명령 ${this.cmdCursor + 1}/${this.snippets.length} · 더블탭 뒤로`,
+          m.withBack(m.commandsHeader(this.cmdCursor + 1, this.snippets.length)),
           this.shownSnippets().map((x, i) => ({
-            text: x.kind === 'cron' ? `${x.label} (예약)` : x.label,
+            text: x.kind === 'cron' ? `${x.label}${m.scheduledSuffix}` : x.label,
             state: i === this.cmdCursor ? 'running' : undefined,
           })),
         );
@@ -1615,18 +1670,18 @@ export class GlassesUI {
 
       // 홈 더블탭 선택지.
       if (this.screen === 'home-menu') {
-        await this.glasses.showList('홈 · 더블탭 취소', [...HOME_MENU]);
+        await this.glasses.showList(msg().homeMenuHeader, HOME_MENU.map((k) => msg()[k]));
         return;
       }
 
       // 11) 타이머·물 마시기. 폰(Relay 앱)의 것을 조작한다.
       if (this.screen === 'phone') {
         if (!this.phone) {
-          await this.glasses.showList('타이머 · 물 · 더블탭 뒤로', ['폰의 Relay 앱에 붙어 있을 때 씁니다']);
+          await this.glasses.showList(msg().withBack(msg().menuPhone), [msg().phoneNeedsApp]);
           return;
         }
         await this.glasses.showList(
-          `${phoneHeader(this.phone, this.phoneAt, Date.now())} · 더블탭 뒤로`,
+          msg().withBack(phoneHeader(this.phone, this.phoneAt, Date.now())),
           phoneActions(this.phone).map((a) => a.label),
         );
         return;
@@ -1634,13 +1689,14 @@ export class GlassesUI {
 
       // 12) 설정.
       if (this.screen === 'settings') {
-        await this.glasses.showList('설정 · 더블탭 뒤로', [
-          this.glasses.isVoiceEnabled ? '음성: 켜짐' : '음성: 꺼짐',
-          this.showLogo ? 'DEV 로고: 켜짐' : 'DEV 로고: 꺼짐',
+        const m = msg();
+        await this.glasses.showList(m.withBack(m.menuSettings), [
+          this.glasses.isVoiceEnabled ? m.voiceOn : m.voiceOff,
+          this.showLogo ? m.logoOn : m.logoOff,
           // 펌웨어가 앞쪽 공백을 지워 들여쓰기로는 정렬이 안 맞는다.
           // 고른 값과 아닌 값 모두 보이는 문자를 앞에 둔다.
           ...IDLE_CHOICES.map(
-            (ms) => `${this.idleMs === ms ? '*' : '-'} 화면 꺼짐: ${ms / 1000}초`,
+            (ms) => m.idleChoice(this.idleMs === ms ? '*' : '-', ms / 1000),
           ),
         ]);
         return;
@@ -1658,11 +1714,12 @@ export class GlassesUI {
           state: i.done ? 'done' : 'todo',
         }));
         // 비어 있으면 리스트를 만들 수 없으므로 안내를 항목으로 넣는다.
-        if (items.length === 0) items.push({ text: '(폰에서 할 일을 추가하세요)' });
-        else items.push({ text: '완료 항목 치우기' });
-        const label = this.checkGlobal ? '전역 할 일' : '할 일';
+        const m = msg();
+        if (items.length === 0) items.push({ text: m.noTodosRow });
+        else items.push({ text: m.clearDone });
+        const label = this.checkGlobal ? m.globalTodos : m.todos;
         await this.glasses.showList(
-          `${label} ${done}/${this.checklist.length} · 더블탭 뒤로`,
+          m.withBack(`${label} ${done}/${this.checklist.length}`),
           items,
         );
         return;
@@ -1674,16 +1731,17 @@ export class GlassesUI {
         await this.glasses.showLive(this.liveView(s));
         return;
       }
-      const head = s ? clamp(s.title || '새 대화', 46) : '세션';
+      const m = msg();
+      const head = s ? clamp(s.title || m.newChat, 46) : m.session;
 
       let status: string;
       if (s && !s.live) {
-        status = '종료됨 · 탭하면 이어가기';
+        status = m.detailEnded;
       } else if (this.status === 'busy') {
         // 가만히 있는 화면은 멈춘 것처럼 보인다.
-        status = `${SPINNER[this.tick % SPINNER.length]} ${this.activity || '작업 중'}`;
+        status = `${SPINNER[this.tick % SPINNER.length]} ${this.activity || m.stateBusy}`;
       } else {
-        status = `${this.statusText(this.status || s?.status || '')} · 탭 할일 · 더블탭 뒤로`;
+        status = m.detailStatus(this.statusText(this.status || s?.status || ''));
       }
 
       await this.glasses.showText(
@@ -1691,7 +1749,7 @@ export class GlassesUI {
       );
     } catch (err) {
       // 화면 갱신 실패가 glasses-ui를 멈추면 안 된다.
-      this.log(`화면 표시 오류: ${(err as Error).message}`, 'error');
+      this.log(msg().renderError((err as Error).message), 'error');
     }
   }
 
@@ -1712,7 +1770,7 @@ export class GlassesUI {
       case 'stderr':
         return { kind: 'error', text: first('text') };
       case 'resumed':
-        return { kind: 'info', text: '여기부터 이어서' };
+        return { kind: 'info', text: msg().resumedHere };
       default:
         return null;
     }
@@ -1723,16 +1781,16 @@ export class GlassesUI {
     const text = (k: string): string => String(e[k] ?? '');
     switch (e.type) {
       case 'user':
-        return `나: ${clamp(text('text').split('\n')[0] ?? '', 60)}`;
+        return `${msg().me}: ${clamp(text('text').split('\n')[0] ?? '', 60)}`;
       case 'assistant':
         // 긴 답변이 화면을 다 먹으면 진행 상황이 묻힌다.
         return clamp(text('text').split('\n')[0] ?? '', 90);
       case 'tool_use':
         return `> ${text('name')}`;
       case 'stderr':
-        return `오류: ${clamp(text('text'), 60)}`;
+        return `${msg().kindError}: ${clamp(text('text'), 60)}`;
       case 'resumed':
-        return '── 여기부터 이어서 ──';
+        return `── ${msg().resumedHere} ──`;
       default:
         return null;
     }
@@ -1773,7 +1831,7 @@ export class GlassesUI {
       this.activityAt = Date.now();
     }
     if (e.type === 'thinking') {
-      this.activity = '생각 중';
+      this.activity = msg().thinking;
       this.activityDetail = '';
       this.activityAt = Date.now();
     }
@@ -1787,8 +1845,8 @@ export class GlassesUI {
       this.permCursor = 0;
       // 답해야 진행되는 일이므로 화면을 깨운다.
       this.wake();
-      this.glasses.speak(`권한 요청, ${e.toolName}`);
-      this.log(`권한 요청: ${e.toolName}`, 'warn');
+      this.glasses.speak(msg().speakPermission(String(e.toolName)));
+      this.log(msg().logPermission(String(e.toolName)), 'warn');
       await this.render();
       return;
     }
@@ -1802,13 +1860,15 @@ export class GlassesUI {
     if (e.type === 'turn_complete') {
       const result = String(e.result ?? '');
       const failed = e.isError === true;
-      this.status = failed ? '오류' : '완료';
+      // 글이 아니라 상태 값을 둔다. 글은 statusText가 고른다.
+      this.status = failed ? 'error' : 'done';
       this.setSpinning(false);
       this.doneIds.add(String(e.sessionId ?? this.activeId));
       // 결과를 보여줘야 하므로 깨운다.
       this.wake();
-      this.glasses.speak(failed ? '작업 중 오류가 발생했습니다.' : `작업 완료. ${result}`);
-      this.log(failed ? `오류: ${result}` : `완료: ${result}`, failed ? 'error' : 'ok');
+      const m = msg();
+      this.glasses.speak(failed ? m.speakFailed : m.speakDone(result));
+      this.log(`${failed ? m.kindError : m.kindDone}: ${result}`, failed ? 'error' : 'ok');
       await this.render();
       void this.refresh();
       return;
@@ -1836,14 +1896,16 @@ export class GlassesUI {
       const failed = e.isError === true;
       this.doneIds.add(id);
       this.wake();
-      this.glasses.speak(failed ? '작업 중 오류가 발생했습니다.' : `작업 완료. ${result}`);
-      this.log(`[${s?.title ?? '세션'}] ${failed ? '오류' : '완료'}: ${result}`, failed ? 'error' : 'ok');
+      const m = msg();
+      const verdict = failed ? m.kindError : m.kindDone;
+      this.glasses.speak(failed ? m.speakFailed : m.speakDone(result));
+      this.log(`[${s?.title ?? m.session}] ${verdict}: ${result}`, failed ? 'error' : 'ok');
 
       // 서버에 남겨 나중에 '알림 보기'에서 다시 볼 수 있게 한다.
       // 화면에 한 번 띄우고 마는 팝업은 놓치면 그만이다.
       try {
         const saved = await agentCli.addNotification({
-          title: `${failed ? '오류' : '완료'}: ${s?.title || '새 대화'}`,
+          title: `${verdict}: ${s?.title || m.newChat}`,
           body: result,
           kind: failed ? 'error' : 'done',
           sessionId: id,
@@ -1853,7 +1915,7 @@ export class GlassesUI {
         // 되돌아온 SSE가 같은 것을 한 번 더 띄우지 않게 눌러둔다.
         if (saved?.id) this.lastSeenNotifId = saved.id;
       } catch (err) {
-        this.log(`알림 저장 실패: ${(err as Error).message}`, 'warn');
+        this.log(m.saveNotifFailed((err as Error).message), 'warn');
       }
 
       // 목록·홈에 있을 때만 팝업을 띄운다. 대화 화면에서는 이미 보고 있다.
@@ -1862,9 +1924,9 @@ export class GlassesUI {
       // 않아 탭할 때까지 화면이 굳는다.
       if (this.screen === 'home' || this.screen === 'sessions') {
         this.showNotice({
-          title: s?.title || '새 대화',
-          text: failed ? `오류: ${result}` : result,
-          label: '에이전트',
+          title: s?.title || m.newChat,
+          text: failed ? `${m.kindError}: ${result}` : result,
+          label: m.kindAgent,
           kind: failed ? 'error' : 'done',
         });
       }
@@ -1881,8 +1943,8 @@ export class GlassesUI {
       };
       this.permCursor = 0;
       this.wake();
-      this.glasses.speak(`권한 요청, ${e.toolName}`);
-      this.log(`[${s?.title ?? '세션'}] 권한 요청: ${e.toolName}`, 'warn');
+      this.glasses.speak(msg().speakPermission(String(e.toolName)));
+      this.log(`[${s?.title ?? msg().session}] ${msg().logPermission(String(e.toolName))}`, 'warn');
       await this.render();
     }
   }
@@ -2047,8 +2109,8 @@ export class GlassesUI {
       this.sysReadAt = new Date();
       this.sysError = undefined;
     } else {
-      this.sysError = '시스템 상태를 읽지 못했습니다';
-      this.log(`시스템 상태를 읽지 못했습니다: ${sys.reason}`, 'warn');
+      this.sysError = msg().sysReadFailed;
+      this.log(msg().loadSysFailed(String(sys.reason)), 'warn');
     }
     this.procs = procs.status === 'fulfilled' ? procs.value : [];
 
@@ -2067,7 +2129,8 @@ export class GlassesUI {
   private async runSnippet(s: Snippet, confirm = false): Promise<void> {
     this.wake();
     this.screen = 'command-result';
-    this.cmdResult = { label: s.label, text: '실행 중…', snippetId: s.id, command: s.command, state: 'running' };
+    const m = msg();
+    this.cmdResult = { label: s.label, text: m.running, snippetId: s.id, command: s.command, state: 'running' };
     await this.render();
 
     try {
@@ -2077,23 +2140,23 @@ export class GlassesUI {
         const why = (res.risks ?? []).map((r) => `· ${r.reason}`).join('\n');
         this.cmdResult = {
           label: s.label,
-          text: `${why || '되돌릴 수 없는 명령입니다.'}\n\n그래도 실행할까요?`,
+          text: `${why || `${m.irreversible}.`}\n\n${m.runAnywayQ}`,
           awaitingConfirm: true,
           snippetId: s.id,
           command: s.command,
           state: 'confirm',
           lines: (res.risks ?? []).map((r) => r.reason),
         };
-        this.glasses.speak('확인이 필요합니다');
+        this.glasses.speak(m.needsConfirm);
         await this.render();
         return;
       }
 
       const r = res.result;
-      const head = r?.timedOut ? '(시간 초과) ' : r?.exitCode ? `(종료 ${r.exitCode}) ` : '';
+      const head = r?.timedOut ? `(${m.timedOut}) ` : r?.exitCode ? `(${m.exitCode(r.exitCode)}) ` : '';
       this.cmdResult = {
         label: s.label,
-        text: head + (r?.output?.trim() || '(출력 없음)'),
+        text: head + (r?.output?.trim() || m.noOutput),
         snippetId: s.id,
         command: s.command,
         state: 'done',
@@ -2103,17 +2166,17 @@ export class GlassesUI {
         tookMs: r?.tookMs,
         timedOut: r?.timedOut,
       };
-      this.log(`[${s.label}] 종료 ${r?.exitCode ?? '?'} (${r?.tookMs ?? 0}ms)`, 'ok');
+      this.log(m.logExit(s.label, r?.exitCode ?? '?', r?.tookMs ?? 0), 'ok');
     } catch (err) {
       this.cmdResult = {
         label: s.label,
-        text: `실패: ${(err as Error).message}`,
+        text: m.failedWith((err as Error).message),
         snippetId: s.id,
         command: s.command,
         state: 'failed',
         lines: [(err as Error).message],
       };
-      this.log(`[${s.label}] 실행 실패: ${(err as Error).message}`, 'error');
+      this.log(m.logRunFailed(s.label, (err as Error).message), 'error');
     }
     await this.render();
   }
@@ -2163,7 +2226,7 @@ export class GlassesUI {
       try {
         await this.refresh();
       } catch (err) {
-        this.log(`세션 목록을 읽지 못했습니다: ${(err as Error).message}`, 'warn');
+        this.log(msg().loadSessionsFailed((err as Error).message), 'warn');
       }
       return;
     }
@@ -2176,7 +2239,7 @@ export class GlassesUI {
         this.notifications = items;
         this.unread = unread;
       } catch (err) {
-        this.log(`알림을 읽지 못했습니다: ${(err as Error).message}`, 'warn');
+        this.log(msg().loadNotificationsFailed((err as Error).message), 'warn');
       }
       await this.render();
       return;
@@ -2200,7 +2263,7 @@ export class GlassesUI {
       try {
         this.snippets = await agentCli.listSnippets();
       } catch (err) {
-        this.log(`명령 목록을 읽지 못했습니다: ${(err as Error).message}`, 'warn');
+        this.log(msg().loadCommandsFailed((err as Error).message), 'warn');
       }
       await this.render();
       return;
@@ -2229,7 +2292,7 @@ export class GlassesUI {
     try {
       this.history = await agentCli.getHistory(id, 40);
     } catch (err) {
-      this.log(`대화 기록을 읽지 못했습니다: ${(err as Error).message}`, 'warn');
+      this.log(msg().loadHistoryFailed((err as Error).message), 'warn');
     }
     await this.render();
   }
@@ -2254,9 +2317,9 @@ export class GlassesUI {
       const now = new Date().toISOString();
       for (const n of this.notifications) n.readAt ??= now;
       this.unread = 0;
-      this.log('알림을 모두 읽음 처리했습니다.', 'ok');
+      this.log(msg().markedAllRead, 'ok');
     } catch (err) {
-      this.log(`읽음 처리 실패: ${(err as Error).message}`, 'error');
+      this.log(msg().markReadFailed((err as Error).message), 'error');
     }
     await this.render();
   }
@@ -2362,7 +2425,7 @@ export class GlassesUI {
           // 한 줄로 잘린 말의 전문을 보여준다. 알림 화면을 그대로 쓴다.
           this.openNotif = {
             id: '',
-            title: picked.line.split('>')[0] === '나' ? '내 메시지' : 'AI 응답',
+            title: picked.kind === 'me' ? msg().myMessage : msg().aiReply,
             body: picked.full,
             kind: 'info',
             createdAt: '',
@@ -2463,15 +2526,15 @@ export class GlassesUI {
       }
       if (gesture !== 'tap') return;
       const choice = HOME_MENU[this.homeMenuCursor];
-      if (choice === '화면 꺼짐') {
+      if (choice === 'screenOff') {
         // 다시 켜면 홈이 보이게 먼저 홈으로 돌린다. 켜는 것은 여느 때처럼 아무 조작 한 번이다.
         this.screen = 'home';
         return this.sleep();
       }
-      if (choice === '종료하기') {
+      if (choice === 'exit') {
         // 이미 여기서 한 번 골랐으니 시스템 확인 창 없이 바로 나간다.
         // 타이머·구독을 풀고 화면 컨테이너를 닫는다(disconnect).
-        this.log('안경앱을 종료합니다.', 'ok');
+        this.log(msg().exiting, 'ok');
         await this.stop();
         return;
       }
@@ -2510,7 +2573,7 @@ export class GlassesUI {
           if (ms) {
             this.idleMs = ms;
             await this.saveSetting(STORE_IDLE, String(ms));
-            this.log(`화면 꺼짐: ${ms / 1000}초`, 'ok');
+            this.log(msg().idleSet(ms / 1000), 'ok');
             // 새 시간으로 다시 세도록 타이머를 갱신한다.
             this.wake();
           }
@@ -2544,7 +2607,7 @@ export class GlassesUI {
             ? await agentCli.clearDoneGlobalChecklist()
             : await agentCli.clearDoneChecklist(this.activeId);
           this.checkCursor = 0;
-          this.log('완료한 할 일을 치웠습니다.', 'ok');
+          this.log(msg().clearedDone, 'ok');
         } else {
           const item = this.checklist[this.checkCursor];
           if (item) {
@@ -2552,9 +2615,9 @@ export class GlassesUI {
               this.checklist = this.checkGlobal
                 ? await agentCli.toggleGlobalChecklist(item.id)
                 : await agentCli.toggleChecklist(this.activeId, item.id);
-              this.log(`${item.done ? '해제' : '완료'}: ${item.text}`, 'ok');
+              this.log(`${item.done ? msg().todoUnchecked : msg().todoChecked}: ${item.text}`, 'ok');
             } catch (err) {
-              this.log(`체크 실패: ${(err as Error).message}`, 'error');
+              this.log(msg().checkFailed((err as Error).message), 'error');
             }
           }
         }
@@ -2602,7 +2665,7 @@ export class GlassesUI {
         ? await agentCli.getGlobalChecklist()
         : await agentCli.getChecklist(this.activeId);
     } catch (err) {
-      this.log(`할 일 불러오기 실패: ${(err as Error).message}`, 'error');
+      this.log(msg().loadTodosFailed((err as Error).message), 'error');
       this.checklist = [];
     }
     this.checkCursor = 0;
@@ -2634,13 +2697,13 @@ export class GlassesUI {
 
     try {
       await agentCli.resolvePermission(this.activeId, p.id, choice.behavior);
-      this.log(`권한 ${choice.label}: ${p.toolName}`, choice.behavior === 'allow' ? 'ok' : 'warn');
+      this.log(msg().logPermissionDecided(msg()[choice.label], p.toolName), choice.behavior === 'allow' ? 'ok' : 'warn');
       if (choice.always) {
         await agentCli.setPolicy(this.activeId, 'auto-approve');
-        this.log('이 세션은 앞으로 자동 승인됩니다.', 'warn');
+        this.log(msg().autoApproved, 'warn');
       }
     } catch (err) {
-      this.log(`권한 처리 실패: ${(err as Error).message}`, 'error');
+      this.log(msg().permFailed((err as Error).message), 'error');
     }
     await this.render();
   }
@@ -2648,9 +2711,9 @@ export class GlassesUI {
   async toggleVoice(): Promise<void> {
     const next = !this.glasses.isVoiceEnabled;
     this.glasses.setVoiceEnabled(next);
-    this.log(`음성 알림 ${next ? '켜짐' : '꺼짐'}`, 'ok');
+    this.log(msg().voiceLog(next), 'ok');
     await this.saveSetting(STORE_VOICE, next ? '1' : '0');
-    if (next) this.glasses.speak('음성 알림을 켰습니다');
+    if (next) this.glasses.speak(msg().speakVoiceOn);
     await this.render();
   }
 
@@ -2661,7 +2724,7 @@ export class GlassesUI {
    */
   async toggleLogo(): Promise<void> {
     this.showLogo = !this.showLogo;
-    this.log(`DEV 로고 ${this.showLogo ? '켜짐' : '꺼짐'}`, 'ok');
+    this.log(msg().logoLog(this.showLogo), 'ok');
     await this.saveSetting(STORE_LOGO, this.showLogo ? '1' : '0');
     await this.render();
   }
@@ -2686,7 +2749,7 @@ export class GlassesUI {
         if (fed) this.feed.push(fed);
       }
     } catch (err) {
-      this.log(`이력 불러오기 실패: ${(err as Error).message}`, 'error');
+      this.log(msg().historyLoadFailed((err as Error).message), 'error');
     }
 
     if (s?.live) {
@@ -2702,16 +2765,16 @@ export class GlassesUI {
     // 무조작 타이머는 걸리지 않아, 그대로 켜진 채 남는다.
     this.wake();
     try {
-      await this.glasses.showText('대화를 이어가는 중…');
+      await this.glasses.showText(msg().resuming);
       const { session, deletedOriginal } = await agentCli.resumeSession(id, deleteOriginal);
-      this.log(deletedOriginal ? '대화를 이어갑니다. 원본은 삭제했습니다.' : '대화를 이어갑니다.', 'ok');
+      this.log(deletedOriginal ? msg().resumedDeleted : msg().resumed, 'ok');
       this.sessions = await agentCli.listSessions();
       await this.open(session.id);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '이어가기 실패';
-      this.log(msg, 'error');
+      const why = err instanceof Error ? err.message : msg().resumeFailed;
+      this.log(why, 'error');
       this.wake();
-      await this.glasses.showText(`이어가기 실패\n\n${clamp(msg, 200)}`);
+      await this.glasses.showText(`${msg().resumeFailed}\n\n${clamp(why, 200)}`);
     }
   }
 

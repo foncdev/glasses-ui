@@ -7,6 +7,7 @@
  */
 
 import type { PhoneStatus, PhoneTimerAction } from './phone.js';
+import { msg } from './i18n.js';
 
 export interface SessionInfo {
   id: string;
@@ -121,7 +122,7 @@ export class AgentCliError extends Error {
 
 function normalizeBaseUrl(raw: string): string {
   let url = raw.trim();
-  if (!url) throw new AgentCliError('주소가 비어 있습니다.');
+  if (!url) throw new AgentCliError(msg().errEmptyAddress);
   if (!/^https?:\/\//i.test(url)) url = `http://${url}`;
   // 포트를 생략하면 매니저 기본 포트를 붙인다.
   if (!/:\d+/.test(url.replace(/^https?:\/\//i, ''))) url = `${url}:4000`;
@@ -192,7 +193,7 @@ export class AgentCliClient {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!this.baseUrl) throw new AgentCliError('agent-cli 주소가 설정되지 않았습니다.');
+    if (!this.baseUrl) throw new AgentCliError(msg().errNotConfigured);
 
     let res: Response;
     try {
@@ -214,10 +215,10 @@ export class AgentCliClient {
       });
     } catch (err) {
       if ((err as Error).name === 'TimeoutError') {
-        throw new AgentCliError(`서버가 ${REQUEST_TIMEOUT_MS / 1000}초 안에 답하지 않습니다: ${this.baseUrl}`);
+        throw new AgentCliError(msg().errTimeout(REQUEST_TIMEOUT_MS / 1000, this.baseUrl));
       }
       // 네트워크 자체가 안 되면 원인을 구체적으로 알려준다.
-      throw new AgentCliError(`접속 실패: ${this.baseUrl}\n같은 와이파이인지, agent-cli가 켜져 있는지 확인하세요.`);
+      throw new AgentCliError(msg().errConnect(this.baseUrl));
     }
 
     if (res.status === 204) return undefined as T;
@@ -240,9 +241,9 @@ export class AgentCliClient {
           this.unauthorized = true;
           for (const fn of this.unauthorizedListeners) fn();
         }
-        throw new AgentCliError(err?.message ?? '로그인이 풀렸습니다. 다시 로그인하세요.', 401);
+        throw new AgentCliError(err?.message ?? msg().errLoggedOut, 401);
       }
-      throw new AgentCliError(err?.message ?? `요청 실패 (${res.status})`, res.status);
+      throw new AgentCliError(err?.message ?? msg().errRequest(res.status), res.status);
     }
     return body as T;
   }
@@ -252,7 +253,7 @@ export class AgentCliClient {
     return this.request<AuthStatus>('/auth/status');
   }
 
-  async login(username: string, password: string, label = '안경'): Promise<string> {
+  async login(username: string, password: string, label = msg().deviceLabel): Promise<string> {
     const { token } = await this.request<{ token: string }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, password, label }),
@@ -382,7 +383,7 @@ export class AgentCliClient {
     }
     if (!res.ok) {
       const err = body.error as { message?: string } | undefined;
-      throw new AgentCliError(err?.message ?? `실행 실패 (${res.status})`);
+      throw new AgentCliError(err?.message ?? msg().errRun(res.status));
     }
     return { result: body as unknown as RunResult };
   }
@@ -559,11 +560,11 @@ export class AgentCliClient {
         });
       }
       es.onerror = () => {
-        if (!opened) onError?.('실시간 연결 실패');
+        if (!opened) onError?.(msg().errStream);
       };
       return () => es.close();
     } catch {
-      onError?.('실시간 연결을 지원하지 않습니다.');
+      onError?.(msg().errStreamUnsupported);
       return () => undefined;
     }
   }

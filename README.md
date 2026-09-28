@@ -28,6 +28,7 @@ src/
     glasses-ui.ts       GlassesUI — 화면 전환 전체
     agent-cli.ts        relay-service와의 HTTP + SSE
     glasses.ts          GlassesAdapter 인터페이스
+    i18n.ts             화면 글의 한국어·영어 판
     logo.ts             로고 아트
   adapters/
     g2.ts               G2 구현 (BLE 직렬화, protobuf 영값 처리)
@@ -62,6 +63,27 @@ home ─ 상단 요약 + 메뉴 4개
 권한 화면은 **거부가 맨 앞**이다. 잘못 탭해도 승인되지 않게 하려는 것이고, 화면을
 그린 직후 1.2초 동안은 펌웨어가 보내는 헛 선택 이벤트를 무시한다.
 
+## 언어
+
+한국어와 영어를 지원한다. 언어는 폰 언어를 따른다 — Even 앱 웹뷰의
+`navigator.languages` 첫 항목이 `ko`로 시작하면 한국어, 그 밖의 언어는 모두 영어다.
+
+글은 `src/core/i18n.ts`의 `ko`·`en` 판에 키별로 있고, 코드는 `msg().screenOff`,
+`msg().sessionsTotal(3)`처럼 부른다. 서버·폰에서 온 자료(할 일, 알림 제목·본문,
+세션 이름, 명령 출력)는 옮기지 않는다. 테스트나 개발 중에는 `setLocale('en')`으로
+덮어쓴다.
+
+G2 화면은 칸 폭이 고정이라 영어는 짧게 쓴다. `test/i18n.test.ts`가 메뉴·머리줄·
+안내 줄·카드 글이 두 언어 모두 칸에 들어가는지 픽셀로 잰다(`@evenrealities/pretext`).
+
+언어를 더하려면:
+
+1. `i18n.ts`의 `Locale`에 코드를 더한다.
+2. `Messages` 타입을 만족하는 판을 만들어 `CATALOGS`에 넣는다. 키가 빠지거나 남으면 타입 검사에서 걸린다.
+3. `detectLocale`에 그 언어를 고르는 규칙을 더한다.
+4. 호스트 앱(glasses-g2)의 폰 화면 글(`src/strings.ts`)에도 판을 넣는다.
+5. `npm test`로 폭을 확인한다.
+
 ## 테스트
 
 ```bash
@@ -69,7 +91,8 @@ npm test
 ```
 
 안경 없이 돈다. 어댑터를 스텁으로 갈아끼워 화면 전환 그래프와 제스처 매핑을
-검사한다.
+검사한다. 기존 테스트는 한국어 화면 기준이라 `test/setup-locale.ts`가 언어를
+한국어로 고정한다.
 
 ## 관련
 

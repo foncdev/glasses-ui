@@ -1,0 +1,603 @@
+/**
+ * 안경·폰 화면에 뜨는 글의 한국어·영어 판.
+ *
+ * 언어는 웹뷰의 navigator.languages를 따른다. Even 앱 웹뷰는 폰 언어를
+ * 따르므로 폰이 한국어면 한국어, 그 밖의 언어는 모두 영어다.
+ *
+ * 서버·폰에서 온 자료(할 일, 알림 제목·본문, 세션 이름, 명령 출력)는
+ * 옮기지 않는다. 여기는 이 앱이 스스로 만드는 글만 둔다.
+ *
+ * 언어 추가: Locale에 코드를 더하고, Messages 타입을 만족하는 판을
+ * CATALOGS에 넣은 뒤 detectLocale에 고르는 규칙을 더한다. 키가 빠지거나
+ * 남으면 타입 검사와 i18n 테스트가 잡는다.
+ *
+ * G2 화면은 좁고 칸 폭이 고정이다. 영어는 한국어보다 길어지기 쉬우니
+ * 짧게 쓰고, 폭은 test/i18n.test.ts가 픽셀로 잰다.
+ */
+
+export type Locale = 'ko' | 'en';
+
+export const LOCALES: readonly Locale[] = ['ko', 'en'];
+
+const ko = {
+  // --- 경과 시간 (목록 오른쪽, 짧게) ---
+  justNow: '방금',
+  minShort: (n: number) => `${n}분`,
+  hourShort: (n: number) => `${n}시간`,
+  yesterday: '어제',
+  dayShort: (n: number) => `${n}일`,
+  /** '12분' → '12분 전'. */
+  ago: (short: string) => `${short} 전`,
+  /** 하루 전은 '어제 전'이 아니라 '어제'. */
+  yesterdayAgo: '어제',
+  /** 좁은 카드용. 영어는 'ago'를 빼 '5m'로 둔다. */
+  agoTight: (short: string) => `${short} 전`,
+  secShort: (n: number | string) => `${n}초`,
+
+  // --- 공통 ---
+  withBack: (s: string) => `${s} · 더블탭 뒤로`,
+  hintBack: '●● 뒤로',
+  doubleTapBack: '더블탭: 뒤로',
+  newChat: '새 대화',
+  session: '세션',
+  noContent: '(내용 없음)',
+  reading: '읽는 중…',
+  connecting: '연결 중…',
+  me: '나',
+
+  // --- 홈 메뉴 ---
+  menuAgents: '에이전트',
+  menuNotifications: '알림 보기',
+  menuChecklist: '체크 보기',
+  menuSystem: '시스템',
+  menuCommands: '명령',
+  menuPhone: '타이머 · 물',
+  menuSettings: '설정',
+  homeUnread: (n: number) => `${n} new`,
+  busyCount: (n: number) => `작업 ${n}`,
+
+  // --- 홈 더블탭 선택지 ---
+  homeMenuHeader: '홈 · 더블탭 취소',
+  screenOff: '화면 꺼짐',
+  exit: '종료하기',
+  cancel: '취소',
+  exiting: '안경앱을 종료합니다.',
+
+  // --- 세션 상태 ---
+  stateBusy: '작업 중',
+  stateWaiting: '승인 대기',
+  stateIdle: '대기',
+  stateStarting: '준비 중',
+  stateClosed: '종료됨',
+  stateError: '오류',
+  stateDone: '완료',
+  countRunning: '작업 중',
+  countPending: '승인 요청',
+  countIdle: '대기',
+  countOffline: '종료',
+  approvals: (n: number) => `◆ 승인 ${n}`,
+  sessionsTotal: (n: number) => `세션 ${n}개`,
+  hintOpenBack: '● 열기    ●● 뒤로',
+  noSessionsTitle: '연결된 세션이 없습니다',
+  noSessionsHint: '맥에서 claude를 시작하면 여기 뜹니다',
+  noSessionsRow: '(연결된 세션이 없습니다)',
+  sessionsHeader: (n: number) => `세션 ${n}`,
+  busyHeader: (n: number) => `작업중 ${n}`,
+
+  // --- 알림 ---
+  kindError: '오류',
+  kindPermission: '권한',
+  kindDone: '완료',
+  kindInfo: '정보',
+  kindAgent: '에이전트',
+  kindTodo: '할 일',
+  kindNotification: '알림',
+  unreadStatus: (n: number) => `● 새 ${n}`,
+  markAllRead: '모두 읽음 처리',
+  legendUnread: '채움 = 안 읽음',
+  hintCloseBack: '● 닫기    ●● 뒤로',
+  noNotificationsTitle: '알림이 없습니다',
+  noNotificationsHint: '새 알림은 여기와 홈에 뜹니다',
+  noNotificationsRow: '(알림이 없습니다)',
+  newNotifications: '새 알림',
+  notificationsHeader: (unread: number, total: number) => `알림 ${unread}/${total}`,
+  closeHint: (sec: number) => `${sec}초 후 닫힘  ·  탭: 닫기`,
+  closeHintShort: (sec: number) => `${sec}초 후 닫힘 · 탭: 닫기`,
+
+  // --- 할 일 ---
+  clearDone: '완료 항목 치우기',
+  hintCheckBack: '● 체크    ●● 뒤로',
+  addOnPhoneWeb: '폰·웹에서 추가',
+  noTodosTitle: '할 일이 없습니다',
+  noTodosHint: '폰이나 웹에서 추가하면 여기 뜹니다',
+  noTodosRow: '(폰에서 할 일을 추가하세요)',
+  todoProgress: '진행',
+  todoLeft: '남음',
+  todoDone: '완료',
+  todos: '할 일',
+  globalTodos: '전역 할 일',
+  clearedDone: '완료한 할 일을 치웠습니다.',
+  todoUnchecked: '해제',
+  todoChecked: '완료',
+
+  // --- 명령 ---
+  cronCount: (n: number) => `예약 ${n}`,
+  hintRunBack: '● 실행    ●● 뒤로',
+  registerOnPhoneWeb: '폰·웹에서 등록',
+  cmdOnce: '직접',
+  cmdCron: '예약',
+  exitCode: (code: number | string) => `종료 ${code}`,
+  noCommandsTitle: '등록한 명령이 없습니다',
+  noCommandsHint: '폰이나 웹에서 등록하면 여기 뜹니다',
+  noCommandsRow: '등록된 명령이 없습니다',
+  registerOnWebRow: '웹에서 먼저 등록하세요',
+  commandsHeader: (i: number, n: number) => `명령 ${i}/${n}`,
+  scheduledSuffix: ' (예약)',
+  running: '실행 중…',
+  irreversible: '되돌릴 수 없는 명령입니다',
+  runAnywayQ: '그래도 실행할까요?',
+  needsConfirm: '확인이 필요합니다',
+  timedOut: '시간 초과',
+  tookUnder: '0.1초 미만',
+  failed: '실패',
+  confirmNeeded: '확인 필요',
+  hintRunAnyway: '● 그래도 실행    ●● 취소',
+  hintBackToList: '●● 목록으로',
+  noOutput: '(출력 없음)',
+  moreLines: (n: number) => `… ${n}줄 더 · 폰에서 보기`,
+  resultMarkConfirm: '! 확인 필요',
+  resultMarkDone: '* 실행 결과',
+  resultMore: '…(폰에서 전문 보기)',
+  resultTapRun: '탭: 실행 · 더블탭: 취소',
+  noResult: '결과가 없습니다\n\n더블탭: 뒤로',
+  failedWith: (m: string) => `실패: ${m}`,
+  logExit: (label: string, code: number | string, ms: number) => `[${label}] 종료 ${code} (${ms}ms)`,
+  logRunFailed: (label: string, m: string) => `[${label}] 실행 실패: ${m}`,
+
+  // --- 시스템 ---
+  system: '시스템',
+  load: (v: string) => `로드 ${v}`,
+  uptime: (v: string) => `가동 ${v}`,
+  procsReadFailed: '프로세스를 읽지 못했습니다',
+  readAt: (t: string) => `읽음 ${t}`,
+  hintRefreshBack: '● 새로 읽기    ●● 뒤로',
+  runTerminalAgent: '맥에서 terminal-agent를 실행하세요',
+  procHeader: '프로세스',
+  readFailed: '읽지 못했습니다',
+  sysReadFailed: '시스템 상태를 읽지 못했습니다',
+
+  // --- 대화 ---
+  continueChat: '대화 이어서 보기',
+  infoTurns: '턴',
+  infoCost: '비용',
+  infoFolder: '폴더',
+  infoActivity: '활동',
+  hintFullBack: '● 전문 보기    ●● 뒤로',
+  endedTapResume: '종료됨  ·  탭하면 이어가기',
+  stateTapTodo: (state: string) => `${state}  ·  탭하면 할 일`,
+  hintResumeBack: '● 이어가기    ●● 뒤로',
+  hintTodoBack: '● 할 일    ●● 뒤로',
+  turns: (n: number) => `턴 ${n}`,
+  noHistoryRow: '(주고받은 기록이 없습니다)',
+  myMessage: '내 메시지',
+  aiReply: 'AI 응답',
+  resumedHere: '여기부터 이어서',
+  thinking: '생각 중',
+  detailEnded: '종료됨 · 탭하면 이어가기',
+  detailStatus: (state: string) => `${state} · 탭 할일 · 더블탭 뒤로`,
+  resuming: '대화를 이어가는 중…',
+  resumed: '대화를 이어갑니다.',
+  resumedDeleted: '대화를 이어갑니다. 원본은 삭제했습니다.',
+  resumeFailed: '이어가기 실패',
+
+  // --- 권한 ---
+  permDeny: '거부',
+  permOnce: '허용 (이번만)',
+  permAlways: '허용 (이 세션 계속)',
+  permRequest: '◆ 권한 요청',
+  permHint: '더블탭 = 거부',
+  permHeader: (tool: string) => `권한: ${tool}`,
+  speakPermission: (tool: string) => `권한 요청, ${tool}`,
+  logPermission: (tool: string) => `권한 요청: ${tool}`,
+  logPermissionDecided: (choice: string, tool: string) => `권한 ${choice}: ${tool}`,
+  autoApproved: '이 세션은 앞으로 자동 승인됩니다.',
+
+  // --- 작업 완료 ---
+  speakFailed: '작업 중 오류가 발생했습니다.',
+  speakDone: (result: string) => `작업 완료. ${result}`,
+
+  // --- 요약(글 화면용 머리줄) ---
+  summary: (busy: number, total: number, unread: number, done: number, todos: number) =>
+    `세션 ${busy}/${total} · 알림 ${unread} · 체크 ${done}/${todos}`,
+
+  // --- 타이머 · 물 ---
+  timerEnd: '◆ 끝',
+  durMin: (m: number) => `${m}분`,
+  durSec: (s: number) => `${s}초`,
+  durMinSec: (m: number, s: number) => `${m}분 ${s}초`,
+  /** 홈 상태 표시줄의 물 잔 수. 칸이 좁아 영어는 'H2O'로 줄인다. */
+  water: (count: number, goal: number) => `물 ${count}/${goal}`,
+  drinkWater: '물 한 잔 마셨어요',
+  undoWater: '물 한 잔 빼기',
+  startTimer: (min: number) => `▶ ${min}분 시작`,
+  pauseTimer: '■ 멈춤',
+  resumeTimer: '▶ 계속',
+  addMinute: '+1분',
+  resetTimer: '초기화',
+  timerIdle: '대기',
+  phoneHeader: (timer: string, count: number, goal: number) => `타이머 ${timer} · 물 ${count}/${goal}잔`,
+  phoneNeedsApp: '폰의 Relay 앱에 붙어 있을 때 씁니다',
+  speakTimerDone: '타이머가 끝났습니다',
+  timerDoneTitle: '타이머 종료',
+  timerDoneText: (duration: string) => `${duration} 타이머가 끝났습니다.`,
+  timerLabel: '타이머',
+  speakWater: '물 마실 시간입니다',
+  waterTitle: '물 마실 시간',
+  waterText: (count: number, goal: number) => `오늘 ${count}/${goal}잔 · 폰에서 [마셨어요]`,
+  waterLabel: '물 마시기',
+
+  // --- 설정 ---
+  voiceOn: '음성: 켜짐',
+  voiceOff: '음성: 꺼짐',
+  logoOn: 'DEV 로고: 켜짐',
+  logoOff: 'DEV 로고: 꺼짐',
+  idleChoice: (mark: string, sec: number) => `${mark} 화면 꺼짐: ${sec}초`,
+  idleSet: (sec: number) => `화면 꺼짐: ${sec}초`,
+  voiceLog: (on: boolean) => `음성 알림 ${on ? '켜짐' : '꺼짐'}`,
+  speakVoiceOn: '음성 알림을 켰습니다',
+  logoLog: (on: boolean) => `DEV 로고 ${on ? '켜짐' : '꺼짐'}`,
+
+  // --- 안경 화면 안내 ---
+  loggedOut: '로그인이 풀렸습니다.\n\n폰에서 다시 로그인해 주세요.',
+  connectingAuth: '연결 중…\n\n폰에서 인증을 마쳐 주세요.',
+  emptyList: '(비어 있음)',
+
+  // --- 폰 로그 ---
+  gestureError: (m: string) => `조작 처리 오류: ${m}`,
+  actionFailed: (label: string, m: string) => `${label} 실패: ${m}`,
+  restoreFailed: (m: string) => `화면 복구 실패: ${m}`,
+  renderError: (m: string) => `화면 표시 오류: ${m}`,
+  saveNotifFailed: (m: string) => `알림 저장 실패: ${m}`,
+  loadSessionsFailed: (m: string) => `세션 목록을 읽지 못했습니다: ${m}`,
+  loadNotificationsFailed: (m: string) => `알림을 읽지 못했습니다: ${m}`,
+  loadCommandsFailed: (m: string) => `명령 목록을 읽지 못했습니다: ${m}`,
+  loadHistoryFailed: (m: string) => `대화 기록을 읽지 못했습니다: ${m}`,
+  loadSysFailed: (m: string) => `시스템 상태를 읽지 못했습니다: ${m}`,
+  markedAllRead: '알림을 모두 읽음 처리했습니다.',
+  markReadFailed: (m: string) => `읽음 처리 실패: ${m}`,
+  checkFailed: (m: string) => `체크 실패: ${m}`,
+  loadTodosFailed: (m: string) => `할 일 불러오기 실패: ${m}`,
+  permFailed: (m: string) => `권한 처리 실패: ${m}`,
+  historyLoadFailed: (m: string) => `이력 불러오기 실패: ${m}`,
+
+  // --- 서버 접속 오류 (agent-cli) ---
+  errEmptyAddress: '주소가 비어 있습니다.',
+  errNotConfigured: 'agent-cli 주소가 설정되지 않았습니다.',
+  errTimeout: (sec: number, url: string) => `서버가 ${sec}초 안에 답하지 않습니다: ${url}`,
+  errConnect: (url: string) => `접속 실패: ${url}\n같은 와이파이인지, agent-cli가 켜져 있는지 확인하세요.`,
+  errLoggedOut: '로그인이 풀렸습니다. 다시 로그인하세요.',
+  errRequest: (status: number) => `요청 실패 (${status})`,
+  errRun: (status: number) => `실행 실패 (${status})`,
+  errStream: '실시간 연결 실패',
+  errStreamUnsupported: '실시간 연결을 지원하지 않습니다.',
+  /** 로그인 토큰에 붙는 기기 이름. 웹 관리 화면의 토큰 목록에 보인다. */
+  deviceLabel: '안경',
+
+  // --- G2 화면 오류 (폰 로그로 간다) ---
+  errNoResponse: (label: string, ms: number) => `${label} 응답 없음 (${ms}ms)`,
+  errStartup: (code: string) => `시작 페이지 생성 실패 (코드 ${code})`,
+  opText: '텍스트 갱신',
+  opSwitch: '화면 전환',
+  opHeader: '머리줄 갱신',
+  opList: '목록 표시',
+  opRefresh: '화면 갱신',
+  opShow: (kind: string) => `${kind} 표시`,
+};
+
+/**
+ * 판 하나의 모양. 한국어 판에서 뽑되, 글은 string으로 넓힌다.
+ * 영어 판이 키를 빠뜨리거나 더하면 타입 검사에서 걸린다.
+ */
+export type Messages = {
+  readonly [K in keyof typeof ko]: (typeof ko)[K] extends (...args: infer A) => string
+    ? (...args: A) => string
+    : string;
+};
+
+const en: Messages = {
+  justNow: 'now',
+  minShort: (n) => `${n}m`,
+  hourShort: (n) => `${n}h`,
+  yesterday: '1d',
+  dayShort: (n) => `${n}d`,
+  ago: (short) => `${short} ago`,
+  yesterdayAgo: '1d ago',
+  agoTight: (short) => short,
+  secShort: (n) => `${n}s`,
+
+  withBack: (s) => `${s} · Double-tap: back`,
+  hintBack: '●● Back',
+  doubleTapBack: 'Double-tap: back',
+  newChat: 'New chat',
+  session: 'Session',
+  noContent: '(empty)',
+  reading: 'Loading…',
+  connecting: 'Connecting…',
+  me: 'Me',
+
+  menuAgents: 'Agents',
+  menuNotifications: 'Notifications',
+  menuChecklist: 'To-Dos',
+  menuSystem: 'System',
+  menuCommands: 'Commands',
+  menuPhone: 'Timer · Water',
+  menuSettings: 'Settings',
+  homeUnread: (n) => `${n} new`,
+  busyCount: (n) => `${n} busy`,
+
+  homeMenuHeader: 'Home · Double-tap: cancel',
+  screenOff: 'Screen off',
+  exit: 'Exit',
+  cancel: 'Cancel',
+  exiting: 'Closing the glasses app.',
+
+  stateBusy: 'Working',
+  stateWaiting: 'Awaiting OK',
+  stateIdle: 'Idle',
+  stateStarting: 'Starting',
+  stateClosed: 'Ended',
+  stateError: 'Error',
+  stateDone: 'Done',
+  countRunning: 'Working',
+  countPending: 'Approval',
+  countIdle: 'Idle',
+  countOffline: 'Ended',
+  approvals: (n) => `◆ ${n} ${n === 1 ? 'ask' : 'asks'}`,
+  sessionsTotal: (n) => (n === 1 ? '1 session' : `${n} sessions`),
+  hintOpenBack: '● Open    ●● Back',
+  noSessionsTitle: 'No sessions connected',
+  noSessionsHint: 'Start claude on your Mac to see it here',
+  noSessionsRow: '(no sessions connected)',
+  sessionsHeader: (n) => `Sessions ${n}`,
+  busyHeader: (n) => `${n} busy`,
+
+  kindError: 'Error',
+  kindPermission: 'Permission',
+  kindDone: 'Done',
+  kindInfo: 'Info',
+  kindAgent: 'Agent',
+  kindTodo: 'To-Dos',
+  kindNotification: 'Notification',
+  unreadStatus: (n) => `● ${n} new`,
+  markAllRead: 'Mark all read',
+  legendUnread: 'Filled = unread',
+  hintCloseBack: '● Close    ●● Back',
+  noNotificationsTitle: 'No notifications',
+  noNotificationsHint: 'New ones show up here and on Home',
+  noNotificationsRow: '(no notifications)',
+  newNotifications: 'New',
+  notificationsHeader: (unread, total) => `Notifications ${unread}/${total}`,
+  closeHint: (sec) => `Closes in ${sec}s  ·  Tap: close`,
+  closeHintShort: (sec) => `Closes in ${sec}s · Tap: close`,
+
+  clearDone: 'Clear done',
+  hintCheckBack: '● Check    ●● Back',
+  addOnPhoneWeb: 'Add on phone/web',
+  noTodosTitle: 'No to-dos',
+  noTodosHint: 'Add some on your phone or the web',
+  noTodosRow: '(add to-dos on your phone)',
+  todoProgress: 'Progress',
+  todoLeft: 'Left',
+  todoDone: 'Done',
+  todos: 'To-Dos',
+  globalTodos: 'All To-Dos',
+  clearedDone: 'Cleared done to-dos.',
+  todoUnchecked: 'Unchecked',
+  todoChecked: 'Done',
+
+  cronCount: (n) => `${n} scheduled`,
+  hintRunBack: '● Run    ●● Back',
+  registerOnPhoneWeb: 'Add on phone/web',
+  cmdOnce: 'Manual',
+  cmdCron: 'Scheduled',
+  exitCode: (code) => `exit ${code}`,
+  noCommandsTitle: 'No commands yet',
+  noCommandsHint: 'Add some on your phone or the web',
+  noCommandsRow: 'No commands yet',
+  registerOnWebRow: 'Add them on the web first',
+  commandsHeader: (i, n) => `Commands ${i}/${n}`,
+  scheduledSuffix: ' (scheduled)',
+  running: 'Running…',
+  irreversible: 'This command cannot be undone',
+  runAnywayQ: 'Run it anyway?',
+  needsConfirm: 'Confirmation needed',
+  timedOut: 'Timed out',
+  tookUnder: '<0.1s',
+  failed: 'Failed',
+  confirmNeeded: 'Confirm',
+  hintRunAnyway: '● Run anyway    ●● Cancel',
+  hintBackToList: '●● Back to list',
+  noOutput: '(no output)',
+  moreLines: (n) => `… ${n} more · see phone`,
+  resultMarkConfirm: '! Confirm',
+  resultMarkDone: '* Result',
+  resultMore: '…(full text on phone)',
+  resultTapRun: 'Tap: run · Double-tap: cancel',
+  noResult: 'No result\n\nDouble-tap: back',
+  failedWith: (m) => `Failed: ${m}`,
+  logExit: (label, code, ms) => `[${label}] exit ${code} (${ms}ms)`,
+  logRunFailed: (label, m) => `[${label}] Run failed: ${m}`,
+
+  system: 'System',
+  load: (v) => `load ${v}`,
+  uptime: (v) => `up ${v}`,
+  procsReadFailed: "Couldn't read processes",
+  readAt: (t) => `read ${t}`,
+  hintRefreshBack: '● Refresh    ●● Back',
+  runTerminalAgent: 'Run terminal-agent on your Mac',
+  procHeader: 'Process',
+  readFailed: "Couldn't read",
+  sysReadFailed: "Couldn't read system status",
+
+  continueChat: 'Open live chat',
+  infoTurns: 'Turns',
+  infoCost: 'Cost',
+  infoFolder: 'Folder',
+  infoActivity: 'Active',
+  hintFullBack: '● Full text    ●● Back',
+  endedTapResume: 'Ended  ·  Tap to resume',
+  stateTapTodo: (state) => `${state}  ·  Tap for to-dos`,
+  hintResumeBack: '● Resume    ●● Back',
+  hintTodoBack: '● To-Dos    ●● Back',
+  turns: (n) => `${n} turns`,
+  noHistoryRow: '(no messages yet)',
+  myMessage: 'My message',
+  aiReply: 'AI reply',
+  resumedHere: 'Resumed here',
+  thinking: 'Thinking',
+  detailEnded: 'Ended · Tap to resume',
+  detailStatus: (state) => `${state} · Tap: to-dos · Double-tap: back`,
+  resuming: 'Resuming chat…',
+  resumed: 'Resuming the chat.',
+  resumedDeleted: 'Resuming the chat. The original was deleted.',
+  resumeFailed: 'Resume failed',
+
+  permDeny: 'Deny',
+  permOnce: 'Allow once',
+  permAlways: 'Allow for this session',
+  permRequest: '◆ Permission',
+  permHint: 'Double-tap = deny',
+  permHeader: (tool) => `Permission: ${tool}`,
+  speakPermission: (tool) => `Permission request, ${tool}`,
+  logPermission: (tool) => `Permission request: ${tool}`,
+  logPermissionDecided: (choice, tool) => `Permission ${choice}: ${tool}`,
+  autoApproved: 'This session will be auto-approved from now on.',
+
+  speakFailed: 'The task failed with an error.',
+  speakDone: (result) => `Task done. ${result}`,
+
+  summary: (busy, total, unread, done, todos) =>
+    `Sessions ${busy}/${total} · Notifications ${unread} · To-Dos ${done}/${todos}`,
+
+  timerEnd: '◆ Done',
+  durMin: (m) => `${m} min`,
+  durSec: (s) => `${s} sec`,
+  durMinSec: (m, s) => `${m} min ${s} sec`,
+  water: (count, goal) => `H2O ${count}/${goal}`,
+  drinkWater: 'Drank a glass',
+  undoWater: 'Undo a glass',
+  startTimer: (min) => `▶ Start ${min} min`,
+  pauseTimer: '■ Pause',
+  resumeTimer: '▶ Resume',
+  addMinute: '+1 min',
+  resetTimer: 'Reset',
+  timerIdle: 'Idle',
+  phoneHeader: (timer, count, goal) => `Timer ${timer} · Water ${count}/${goal}`,
+  phoneNeedsApp: 'Needs the Relay app on your phone',
+  speakTimerDone: 'Timer finished',
+  timerDoneTitle: 'Timer done',
+  timerDoneText: (duration) => `${duration} timer finished.`,
+  timerLabel: 'Timer',
+  speakWater: 'Time to drink water',
+  waterTitle: 'Water time',
+  waterText: (count, goal) => `Today ${count}/${goal} · Log it on your phone`,
+  waterLabel: 'Water',
+
+  voiceOn: 'Voice: on',
+  voiceOff: 'Voice: off',
+  logoOn: 'DEV logo: on',
+  logoOff: 'DEV logo: off',
+  idleChoice: (mark, sec) => `${mark} Screen off: ${sec}s`,
+  idleSet: (sec) => `Screen off: ${sec}s`,
+  voiceLog: (on) => `Voice alerts ${on ? 'on' : 'off'}`,
+  speakVoiceOn: 'Voice alerts on',
+  logoLog: (on) => `DEV logo ${on ? 'on' : 'off'}`,
+
+  loggedOut: 'Signed out.\n\nPlease sign in again on your phone.',
+  connectingAuth: 'Connecting…\n\nFinish signing in on your phone.',
+  emptyList: '(empty)',
+
+  gestureError: (m) => `Input error: ${m}`,
+  actionFailed: (label, m) => `${label} failed: ${m}`,
+  restoreFailed: (m) => `Screen restore failed: ${m}`,
+  renderError: (m) => `Display error: ${m}`,
+  saveNotifFailed: (m) => `Couldn't save notification: ${m}`,
+  loadSessionsFailed: (m) => `Couldn't load sessions: ${m}`,
+  loadNotificationsFailed: (m) => `Couldn't load notifications: ${m}`,
+  loadCommandsFailed: (m) => `Couldn't load commands: ${m}`,
+  loadHistoryFailed: (m) => `Couldn't load chat history: ${m}`,
+  loadSysFailed: (m) => `Couldn't read system status: ${m}`,
+  markedAllRead: 'Marked all notifications read.',
+  markReadFailed: (m) => `Mark read failed: ${m}`,
+  checkFailed: (m) => `Check failed: ${m}`,
+  loadTodosFailed: (m) => `Couldn't load to-dos: ${m}`,
+  permFailed: (m) => `Permission failed: ${m}`,
+  historyLoadFailed: (m) => `Couldn't load history: ${m}`,
+
+  errEmptyAddress: 'The address is empty.',
+  errNotConfigured: 'No server address is set.',
+  errTimeout: (sec, url) => `The server did not answer within ${sec}s: ${url}`,
+  errConnect: (url) => `Connection failed: ${url}\nCheck that you are on the same Wi-Fi and agent-cli is running.`,
+  errLoggedOut: 'Signed out. Please sign in again.',
+  errRequest: (status) => `Request failed (${status})`,
+  errRun: (status) => `Run failed (${status})`,
+  errStream: 'Live connection failed',
+  errStreamUnsupported: 'Live connection is not supported.',
+  deviceLabel: 'Glasses',
+
+  errNoResponse: (label, ms) => `${label} timed out (${ms}ms)`,
+  errStartup: (code) => `Startup page failed (code ${code})`,
+  opText: 'Text update',
+  opSwitch: 'Screen switch',
+  opHeader: 'Header update',
+  opList: 'List',
+  opRefresh: 'Screen update',
+  opShow: (kind) => `Show ${kind}`,
+};
+
+export const CATALOGS: Readonly<Record<Locale, Messages>> = { ko, en };
+
+/**
+ * 선호 언어 목록에서 판을 고른다. 첫 번째 언어가 한국어면 ko, 아니면 en.
+ * 목록이 비어 있으면(모르면) en이다.
+ */
+export function detectLocale(languages?: readonly (string | undefined | null)[] | string | null): Locale {
+  const list = typeof languages === 'string' ? [languages] : (languages ?? []);
+  const first = list.find((l) => typeof l === 'string' && l.trim() !== '');
+  return first && first.trim().toLowerCase().startsWith('ko') ? 'ko' : 'en';
+}
+
+/** 웹뷰(브라우저)의 선호 언어. 없으면 빈 목록. */
+function navigatorLanguages(): string[] {
+  const nav = (globalThis as { navigator?: { languages?: readonly string[]; language?: string } }).navigator;
+  if (!nav) return [];
+  if (nav.languages && nav.languages.length > 0) return [...nav.languages];
+  return nav.language ? [nav.language] : [];
+}
+
+let current: Locale = detectLocale(navigatorLanguages());
+
+/** 지금 쓰는 판의 언어. */
+export function getLocale(): Locale {
+  return current;
+}
+
+/**
+ * 언어를 정한다. 테스트나 개발용 덮어쓰기에 쓴다.
+ * 'ko-KR'처럼 지역이 붙어도 받는다. 모르는 값은 detectLocale 규칙대로 en이 된다.
+ * 인자 없이 부르면 웹뷰 언어로 되돌린다.
+ */
+export function setLocale(locale?: string): Locale {
+  current = locale ? detectLocale([locale]) : detectLocale(navigatorLanguages());
+  return current;
+}
+
+/** 지금 언어의 글 묶음. 부를 때마다 고르므로 setLocale이 바로 반영된다. */
+export function msg(): Messages {
+  return CATALOGS[current];
+}
+
+/** 음성 합성(TTS)에 넘길 언어 태그. */
+export function speechLang(): string {
+  return current === 'ko' ? 'ko-KR' : 'en-US';
+}

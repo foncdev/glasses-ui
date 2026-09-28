@@ -15,6 +15,7 @@
  * 상태별 개수는 글자 칸(바이트 한도 없음)인 오른쪽 카드에 둔다.
  */
 import type { ItemState, SessionsView } from '../core/glasses.js';
+import { msg } from '../core/i18n.js';
 import { type Box, SCREEN_W, alignRight, center, listHeight, spread, spreadItem } from './g2-home.js';
 
 /**
@@ -70,15 +71,15 @@ export function layoutSessions(view: SessionsView): SessionsLayout {
     const inner = cardW - 2 * inset;
     return {
       ...base,
-      footer: { ...base.footer, text: '●● 뒤로' },
+      footer: { ...base.footer, text: msg().hintBack },
       card: {
         x: (SCREEN_W - cardW) / 2, y: 70, w: cardW, h: 27 * 4 + 2 * inset,
         padding: 8, border: { width: 1, color: 6, radius: 10 }, brightness: 3,
         text: [
           center('◌', inner),
-          center('연결된 세션이 없습니다', inner),
+          center(msg().noSessionsTitle, inner),
           '',
-          center('맥에서 claude를 시작하면 여기 뜹니다', inner),
+          center(msg().noSessionsHint, inner),
         ].join('\n'),
         // 목록이 없으니 이 칸이 조작(더블탭 뒤로)을 받는다.
         capture: true,

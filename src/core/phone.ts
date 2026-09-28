@@ -6,6 +6,7 @@
  *
  * 안경은 몇 초마다 읽고, 그 사이에는 받은 때부터 남은 시간을 줄여 그린다.
  */
+import { msg } from './i18n.js';
 
 export interface PhoneTimer {
   phase: 'idle' | 'running' | 'paused' | 'done';
@@ -47,15 +48,16 @@ export function timerRatio(t: PhoneTimer, fetchedAt: number, now: number): numbe
 
 /** 홈 상태 표시줄에 넣을 타이머 글. 분 단위로 올림한다. */
 export function timerLabel(t: PhoneTimer, fetchedAt: number, now: number): string {
-  const min = () => `${Math.ceil(timerRemaining(t, fetchedAt, now) / 60)}분`;
+  const m = msg();
+  const min = () => m.minShort(Math.ceil(timerRemaining(t, fetchedAt, now) / 60));
   switch (t.phase) {
     case 'running':
       // 폰을 못 읽는 사이 다 됐으면 끝난 것으로 보인다. 다음에 읽으면 맞춰진다.
-      return timerRemaining(t, fetchedAt, now) <= 0 ? '◆ 끝' : `▶ ${min()}`;
+      return timerRemaining(t, fetchedAt, now) <= 0 ? m.timerEnd : `▶ ${min()}`;
     case 'paused':
       return `■ ${min()}`;
     case 'done':
-      return '◆ 끝';
+      return m.timerEnd;
     default:
       return '';
   }
@@ -66,13 +68,13 @@ export function durationLabel(seconds: number): string {
   const s = Math.round(seconds);
   const m = Math.floor(s / 60);
   const r = s % 60;
-  if (m === 0) return `${r}초`;
-  return r === 0 ? `${m}분` : `${m}분 ${r}초`;
+  if (m === 0) return msg().durSec(r);
+  return r === 0 ? msg().durMin(m) : msg().durMinSec(m, r);
 }
 
 /** 홈 상태 표시줄에 넣을 물 마시기 글. 알림을 껐으면 비운다. */
 export function waterLabel(w: PhoneWater): string {
-  return w.enabled ? `물 ${w.count}/${w.goal}` : '';
+  return w.enabled ? msg().water(w.count, w.goal) : '';
 }
 
 export type PhoneEvent = 'timerDone' | 'waterDue';
@@ -81,6 +83,8 @@ export type PhoneTimerAction = 'start' | 'pause' | 'resume' | 'add' | 'reset';
 
 /** 안경의 타이머·물 화면 한 줄. 누르면 폰에 조작을 보낸다. */
 export interface PhoneAction {
+  /** 줄을 가리키는 값. 글과 달리 언어가 바뀌어도 그대로다. */
+  id: string;
   label: string;
   timer?: { action: PhoneTimerAction; minutes?: number };
   water?: 'drink' | 'undo';
@@ -99,30 +103,35 @@ export const TIMER_PRESETS = [60, 30, 15];
  * 뜻과 다른 줄을 누를 수 있는데, 그때 돌던 타이머가 지워지면 안 된다.
  */
 export function phoneActions(s: PhoneStatus): PhoneAction[] {
+  const t = msg();
   const water: PhoneAction[] = [
-    { label: '물 한 잔 마셨어요', water: 'drink' },
-    { label: '물 한 잔 빼기', water: 'undo' },
+    { id: 'water-drink', label: t.drinkWater, water: 'drink' },
+    { id: 'water-undo', label: t.undoWater, water: 'undo' },
   ];
   if (s.timer.phase === 'idle' || s.timer.phase === 'done') {
     return [
-      ...TIMER_PRESETS.map((m) => ({ label: `▶ ${m}분 시작`, timer: { action: 'start' as const, minutes: m } })),
+      ...TIMER_PRESETS.map((m) => ({
+        id: `timer-start-${m}`,
+        label: t.startTimer(m),
+        timer: { action: 'start' as const, minutes: m },
+      })),
       ...water,
     ];
   }
   return [
     s.timer.phase === 'running'
-      ? { label: '■ 멈춤', timer: { action: 'pause' } }
-      : { label: '▶ 계속', timer: { action: 'resume' } },
-    { label: '+1분', timer: { action: 'add' } },
+      ? { id: 'timer-pause', label: t.pauseTimer, timer: { action: 'pause' } }
+      : { id: 'timer-resume', label: t.resumeTimer, timer: { action: 'resume' } },
+    { id: 'timer-add', label: t.addMinute, timer: { action: 'add' } },
     ...water,
-    { label: '초기화', timer: { action: 'reset' } },
+    { id: 'timer-reset', label: t.resetTimer, timer: { action: 'reset' } },
   ];
 }
 
 /** 타이머·물 화면의 머리줄. 남은 시간과 오늘 잔 수를 보인다. */
 export function phoneHeader(s: PhoneStatus, fetchedAt: number, now: number): string {
-  const timer = timerLabel(s.timer, fetchedAt, now) || '대기';
-  return `타이머 ${timer} · 물 ${s.water.count}/${s.water.goal}잔`;
+  const timer = timerLabel(s.timer, fetchedAt, now) || msg().timerIdle;
+  return msg().phoneHeader(timer, s.water.count, s.water.goal);
 }
 
 /**

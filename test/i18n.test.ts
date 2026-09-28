@@ -567,3 +567,17 @@ test('영어 글은 같은 자리의 한국어보다 크게 넓지 않다 (홈 �
     }
   });
 });
+
+test('할 일 알림 제목은 서버 언어가 한국어든 영어든 알아본다', async () => {
+  const { isTodoNoticeTitle } = await import('../src/core/glasses-ui.js');
+  for (const t of [
+    '할 일 추가: 우유', '할 일 완료: 우유', '할 일 3건 추가', '할 일 2건 삭제', '완료한 할 일 2건 정리',
+    'To-Do Added: Milk', 'To-Do Completed: Milk', 'To-Do Reopened: Milk', 'To-Do Edited: Milk', 'To-Do Deleted: Milk',
+    'Added 3 to-dos', 'Deleted 1 to-do', 'Cleared 2 completed to-dos', 'Cleared 1 completed to-do',
+  ]) {
+    assert.ok(isTodoNoticeTitle(t), t);
+  }
+  for (const t of ['Build finished', 'Deploy failed', '[KakaoTalk] 홍길동', '빌드 완료']) {
+    assert.ok(!isTodoNoticeTitle(t), t);
+  }
+});

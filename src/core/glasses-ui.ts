@@ -461,6 +461,16 @@ export interface GlassesUIHooks {
   onSessionsChanged?: (sessions: SessionInfo[], cursor: number) => void;
 }
 
+/**
+ * 할 일 변경 알림의 제목인지. 서버(relay-service)와 폰이 만든다.
+ *
+ * 글은 서버 언어(RELAY_LANG)를 따르므로 두 언어를 다 본다. 영어 문구는 폰 앱·서버와 같다:
+ * "To-Do Added: …", "Cleared 2 completed to-dos", "Added 3 to-dos", "Deleted 2 to-dos".
+ */
+export function isTodoNoticeTitle(title: string): boolean {
+  return /^(완료한 )?할 일/.test(title) || /^(To-Do |Cleared \d+ completed to-do|(Added|Deleted) \d+ to-do)/.test(title);
+}
+
 export class GlassesUI {
   private screen: Screen = 'home';
   private sessions: SessionInfo[] = [];
@@ -1412,8 +1422,8 @@ export class GlassesUI {
      */
     if (n.sessionId) return `* ${m.kindAgent}`;
 
-    // 서버가 할 일 변경에 붙이는 제목이다. 서버가 만든 글이라 한국어로 견준다.
-    if (n.title.startsWith('할 일') || n.title.startsWith('완료한 할 일')) return `* ${m.kindTodo}`;
+    // 서버·폰이 할 일 변경에 붙이는 제목이다. 서버 언어(RELAY_LANG)에 따라 한국어나 영어다.
+    if (isTodoNoticeTitle(n.title)) return `* ${m.kindTodo}`;
     return `* ${m.kindNotification}`;
   }
 
@@ -2079,7 +2089,7 @@ export class GlassesUI {
     // 할 일 화면에서 할 일이 바뀐 알림은 띄우지 않는다. 서버가 할 일
     // 변경마다 알림을 남기는데, 안경에서 체크하면 방금 한 일이 팝업으로
     // 떠서 체크한 목록을 덮었다. 목록에 이미 보이는 변화다.
-    if (this.screen === 'checklist' && /^(완료한 )?할 일/.test(newest.title)) return;
+    if (this.screen === 'checklist' && isTodoNoticeTitle(newest.title)) return;
 
     this.wake();
     this.glasses.speak(newest.title);

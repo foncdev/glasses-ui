@@ -345,7 +345,7 @@ test('상태 표시줄: 영어 상태 글이 한국어가 들어가던 오른쪽
   ];
   for (const [name, make] of slots) await sameSlot(name, W, make);
   // 타이머·물만 있을 때(작업 중 세션 없음)는 두 언어 모두 실제로 들어가야 한다.
-  // 작업 수까지 붙으면 한국어도 이미 넘쳐 끝의 시각이 잘린다(위 'home+phone').
+  // 작업 수까지 붙으면 한국어도 넘친다(위 'home+phone'). 그때는 fitStatus가 왼쪽부터 빼 시각을 남긴다.
   await eachLocale((l) => {
     const s = [`▶ ${msg().minShort(12)}`, msg().water(3, 8), '●', '23:59'].join('  ');
     assert.ok(fitsLine(s, W), `[${l}] ${s} (${getTextWidth(s)}px)`);

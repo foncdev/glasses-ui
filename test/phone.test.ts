@@ -122,7 +122,7 @@ test('타이머가 돌면 홈 상태에 남은 시간·물 잔 수가 붙고, �
     const refresh = () => (ui as unknown as { refreshPhone(): Promise<boolean> }).refreshPhone();
     await refresh();
     assert.ok(Math.abs((bars.at(-1) ?? 0) - 0.5) < 0.01, `진행바 ${bars.at(-1)}`);
-    assert.match(views.at(-1)!.status, /▶ 5분 {2}물 3\/8/);
+    assert.match(views.at(-1)!.status, /물 3\/8 {2}▶ 5분/);
 
     // 한 번 못 읽어도 지우지 않는다. 지우면 진행바가 사라졌다 돌아오며 깜빡였다.
     const before = { bars: bars.length, views: views.length };

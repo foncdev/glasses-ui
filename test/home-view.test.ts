@@ -7,9 +7,9 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { measureTextWrap } from '@evenrealities/pretext';
+import { getTextWidth, measureTextWrap } from '@evenrealities/pretext';
 import { G2Display } from '../src/adapters/g2-display.js';
-import { gauge, layoutHome, spread } from '../src/adapters/g2-home.js';
+import { fitStatus, gauge, layoutHome, spread } from '../src/adapters/g2-home.js';
 import { GLASSES_LOGO } from '../src/adapters/g2-logo.js';
 import type { HomeView } from '../src/core/glasses.js';
 
@@ -114,4 +114,29 @@ test('다른 화면을 거치면 홈을 다시 세운다', async () => {
   await display.showList('세션', ['a']);
   await display.showHome(VIEW);
   assert.equal(calls.filter((c) => c.startsWith('rebuild')).length, 3);
+});
+
+test('상태 표시줄이 넘치면 왼쪽 항목부터 빼고 시각은 남긴다', () => {
+  const W = 246 - 4 - 6;
+  // 작업 중 세션·물·타이머가 함께 있으면 한국어도 칸을 넘쳤다. 예전에는 끝의 시각이 잘렸다.
+  const ko = '작업 9  물 10/12잔  ▶ 60분  ●  23:59';
+  const en = '9 busy  H2O 10/12  ▶ 60m  ●  23:59';
+  for (const s of [ko, en]) {
+    const fit = fitStatus(s, W);
+    assert.ok(getTextWidth(fit) <= W, `${fit} (${getTextWidth(fit)}px)`);
+    assert.ok(fit.endsWith('23:59'), `시각이 잘렸다: ${fit}`);
+    assert.ok(fit.includes('▶'), `타이머는 남아야 한다: ${fit}`);
+    assert.ok(!fit.startsWith(' '), fit);
+  }
+  // 흔한 경우: 작업 수만 빠지고 물·타이머는 남는다.
+  assert.equal(fitStatus('작업 1  물 3/8잔  ▶ 12분  ●  23:59', W), '물 3/8잔  ▶ 12분  ●  23:59', '작업 수가 먼저 빠진다');
+  // 가장 넓은 경우: 물도 빠지고 타이머와 시각이 남는다.
+  assert.equal(fitStatus(ko, W), '▶ 60분  ●  23:59');
+  // 들어가면 그대로 둔다.
+  assert.equal(fitStatus('● online  14:05', W), '● online  14:05');
+  // 시각 하나만 남아도 칸이 좁으면 그것은 남긴다.
+  assert.equal(fitStatus('아주 긴 항목  23:59', 20), '23:59');
+  // 실제 배치에서도 시각이 보인다.
+  const l = layoutHome({ ...VIEW, status: ko });
+  assert.ok(l.statusRight.text.trimStart().endsWith('23:59'), l.statusRight.text);
 });

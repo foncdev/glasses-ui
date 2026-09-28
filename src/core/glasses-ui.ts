@@ -858,7 +858,8 @@ export class GlassesUI {
   /** 홈 상태 표시줄의 폰 부분(타이머·물). 없으면 빈 글. */
   private phoneLabel(): string {
     if (!this.phone) return '';
-    return [timerLabel(this.phone.timer, this.phoneAt, Date.now()), waterLabel(this.phone.water)]
+    // 칸이 모자라면 상태 줄은 왼쪽부터 뺀다(fitStatus). 물을 타이머 앞에 두어 먼저 빠지게 한다.
+    return [waterLabel(this.phone.water), timerLabel(this.phone.timer, this.phoneAt, Date.now())]
       .filter(Boolean)
       .join('  ');
   }
@@ -1015,6 +1016,7 @@ export class GlassesUI {
     };
 
     // 타이머·물이 있으면 자리가 모자라 연결 표시는 점만 남긴다.
+    // 그래도 넘치면 왼쪽(작업 수 → 물 → 타이머)부터 빠지고 시각은 남는다.
     const phone = this.phoneLabel();
     const status = [
       busy > 0 ? msg().busyCount(busy) : '',

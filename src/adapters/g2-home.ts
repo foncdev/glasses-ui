@@ -62,8 +62,27 @@ export function spreadItem(left: string, right: string, width: number): string {
 }
 
 export function alignRight(text: string, width: number): string {
-  const t = pxTruncate(text, width);
+  const t = pxTruncate(fitStatus(text, width), width);
   return ' '.repeat(Math.max(0, Math.floor((width - getTextWidth(t)) / SPACE))) + t;
+}
+
+/**
+ * 상태 표시줄 글을 칸에 맞춘다. 넘치면 왼쪽 항목부터 뺀다.
+ *
+ * 항목은 빈칸 두 개 이상으로 나뉘고 맨 끝이 시각이다. 예전에는 끝을 잘라
+ * 가장 중요한 시각이 먼저 사라졌다(작업 중 세션·타이머·물이 함께 있을 때).
+ * 그래서 덜 중요한 것을 왼쪽에 둔다. 마지막 항목은 빼지 않는다.
+ */
+export function fitStatus(text: string, width: number): string {
+  if (getTextWidth(text) <= width) return text;
+  const parts = text.split(/( {2,})/);
+  // parts = [항목, 빈칸, 항목, 빈칸, …, 항목]. 앞에서 항목과 뒤따르는 빈칸을 함께 뺀다.
+  while (parts.length > 1) {
+    parts.splice(0, 2);
+    const next = parts.join('');
+    if (getTextWidth(next) <= width) return next;
+  }
+  return parts.join('');
 }
 
 export function center(text: string, width: number): string {

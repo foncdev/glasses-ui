@@ -94,26 +94,28 @@ export const TIMER_PRESETS = [60, 30, 15];
  *
  * 남은 시간·잔 수는 줄에 넣지 않고 머리줄에 둔다. 목록 글자가 바뀌면
  * 목록을 다시 세워 선택이 첫 줄로 돌아가기 때문이다. 줄은 누를 때만 바뀐다.
+ *
+ * 초기화는 맨 아래에 둔다. 꺼진 화면을 깨우면 커서가 첫 줄로 가서 다음 탭이
+ * 뜻과 다른 줄을 누를 수 있는데, 그때 돌던 타이머가 지워지면 안 된다.
  */
 export function phoneActions(s: PhoneStatus): PhoneAction[] {
-  const timer: PhoneAction[] =
-    s.timer.phase === 'running'
-      ? [
-          { label: '■ 멈춤', timer: { action: 'pause' } },
-          { label: '+1분', timer: { action: 'add' } },
-          { label: '초기화', timer: { action: 'reset' } },
-        ]
-      : s.timer.phase === 'paused'
-        ? [
-            { label: '▶ 계속', timer: { action: 'resume' } },
-            { label: '+1분', timer: { action: 'add' } },
-            { label: '초기화', timer: { action: 'reset' } },
-          ]
-        : TIMER_PRESETS.map((m) => ({ label: `▶ ${m}분 시작`, timer: { action: 'start' as const, minutes: m } }));
-  return [
-    ...timer,
+  const water: PhoneAction[] = [
     { label: '물 한 잔 마셨어요', water: 'drink' },
     { label: '물 한 잔 빼기', water: 'undo' },
+  ];
+  if (s.timer.phase === 'idle' || s.timer.phase === 'done') {
+    return [
+      ...TIMER_PRESETS.map((m) => ({ label: `▶ ${m}분 시작`, timer: { action: 'start' as const, minutes: m } })),
+      ...water,
+    ];
+  }
+  return [
+    s.timer.phase === 'running'
+      ? { label: '■ 멈춤', timer: { action: 'pause' } }
+      : { label: '▶ 계속', timer: { action: 'resume' } },
+    { label: '+1분', timer: { action: 'add' } },
+    ...water,
+    { label: '초기화', timer: { action: 'reset' } },
   ];
 }
 

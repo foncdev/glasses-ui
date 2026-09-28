@@ -531,6 +531,12 @@ test('타이머 · 물 화면에서 폰의 타이머를 시작·멈추고 물을
     return state() as never;
   };
   Object.defineProperty(agentCli, 'canPoll', { get: () => true, configurable: true });
+  // 폰은 로그인한 뒤에만 읽는다.
+  Object.defineProperty(agentCli, 'isConfigured', { get: () => true, configurable: true });
+  Object.defineProperty(agentCli, 'connection', {
+    get: () => ({ baseUrl: 'http://127.0.0.1:4100', apiKey: 'KEY' }),
+    configurable: true,
+  });
   try {
     fire('tap', menuIndex(shown, '타이머 · 물'));
     await settle();
@@ -541,17 +547,26 @@ test('타이머 · 물 화면에서 폰의 타이머를 시작·멈추고 물을
     fire('tap', 1); // 30분 시작
     await settle();
     assert.deepEqual(calls, ['timer start 30']);
-    assert.deepEqual(shown.at(-1)!.items.slice(0, 3), ['■ 멈춤', '+1분', '초기화'], '돌면 멈춤·+1분·초기화');
+    assert.deepEqual(
+      shown.at(-1)!.items,
+      ['■ 멈춤', '+1분', '물 한 잔 마셨어요', '물 한 잔 빼기', '초기화'],
+      '돌면 멈춤·+1분, 초기화는 맨 아래',
+    );
     assert.match(shown.at(-1)!.header, /타이머 ▶ 30분/);
 
     fire('tap', 0); // 멈춤
     await settle();
     assert.equal(shown.at(-1)!.items[0], '▶ 계속');
 
-    fire('tap', 3); // 물 한 잔 마셨어요
+    fire('tap', 2); // 물 한 잔 마셨어요
     await settle();
     assert.equal(calls.at(-1), 'water drink');
     assert.match(shown.at(-1)!.header, /물 3\/8잔/);
+
+    fire('tap', 4); // 초기화
+    await settle();
+    assert.equal(calls.at(-1), 'timer reset');
+    assert.equal(shown.at(-1)!.items[0], '▶ 60분 시작');
 
     fire('doubleTap');
     await settle();
@@ -559,6 +574,8 @@ test('타이머 · 물 화면에서 폰의 타이머를 시작·멈추고 물을
   } finally {
     Object.assign(agentCli, orig);
     delete (agentCli as { canPoll?: boolean }).canPoll;
+    delete (agentCli as { isConfigured?: boolean }).isConfigured;
+    delete (agentCli as { connection?: unknown }).connection;
     restore();
   }
 });

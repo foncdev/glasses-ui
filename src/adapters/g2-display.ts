@@ -41,6 +41,9 @@ import {
 
 type Bridge = Awaited<ReturnType<typeof waitForEvenAppBridge>>;
 
+/** 목록 칸 하나에 넣을 수 있는 줄 수. 넘기면 펌웨어가 목록을 세우지 못한다. */
+const LIST_MAX_ITEMS = 20;
+
 const MAIN_ID = 1;
 const MAIN_NAME = 'main';
 const LIST_ID = 2;
@@ -260,7 +263,7 @@ export class G2Display {
     if (!bridge) return;
 
     // 리스트는 최대 20개, 항목당 63바이트다(64자가 아니다). g2-bytes 참고.
-    const names = items.slice(0, 20).map((s) => fitBytes(clamp(s.replace(/\n/g, ' '), 64)));
+    const names = items.slice(0, LIST_MAX_ITEMS).map((s) => fitBytes(clamp(s.replace(/\n/g, ' '), 64)));
     if (names.length === 0) names.push('(비어 있음)');
 
     const key = JSON.stringify([names, side ?? []]);
@@ -650,11 +653,12 @@ export class G2Display {
               containerName: LIST_NAME,
               isEventCapture: 1,
               itemContainer: new ListItemContainerProperty({
-                itemCount: list.items.length,
+                itemCount: Math.min(list.items.length, LIST_MAX_ITEMS),
                 itemWidth: 0,
                 isItemSelectBorderEn: 1,
                 // 배치가 이미 바이트를 맞추지만, 넘치면 화면이 멈추므로 한 번 더 막는다.
-                itemName: list.items.map((i) => fitBytes(i)),
+                // 줄 수도 마찬가지다. 본체가 줄여 보내지만 넘치면 목록이 서지 않는다.
+                itemName: list.items.slice(0, LIST_MAX_ITEMS).map((i) => fitBytes(i)),
               }),
             }),
           ]

@@ -170,8 +170,19 @@ const SERVER_POLL_FAST_MS = 5_000;
  * 폰은 같은 기기(127.0.0.1)라 싸다. 타이머가 끝난 것을 늦게 알리지 않게
  * 짧게 잡는다. 폰이 답하지 않으면(옛 앱·서버에 직접 붙음) 드물게 읽는다.
  */
-const PHONE_POLL_MS = 10_000;
+const PHONE_POLL_MS = 15_000;
 const PHONE_POLL_SLOW_MS = 60_000;
+/** 읽을 때가 됐는지 보는 간격. 읽기 자체는 위 간격을 지킨다. */
+const PHONE_TICK_MS = 5_000;
+
+/**
+ * G2 목록은 20줄까지다. 넘기면 목록을 세우지 못해 한 줄만 뜨거나 화면이 멈춘다.
+ * 알림이 24건 쌓이자 '7 new'인데 목록에는 한 줄만 보였고 탭도 먹지 않았다.
+ * 끝에 동작 줄(모두 읽음·치우기·이어 보기)을 붙이는 목록은 19줄까지 보인다.
+ * 그리는 곳과 탭을 받는 곳이 같은 줄을 봐야 하므로 shown*()으로만 고른다.
+ */
+const LIST_MAX = 20;
+const LIST_ROWS = LIST_MAX - 1;
 /** 폰이 이만큼 답하지 않으면 가진 타이머를 버리고 원래 선으로 돌린다. */
 const PHONE_STALE_MS = 5 * 60_000;
 
@@ -490,8 +501,13 @@ export class GlassesUI {
   private phone?: PhoneStatus;
   /** phone을 받은 시각(ms). 그 사이 흐른 만큼 타이머를 줄여 그린다. */
   private phoneAt = 0;
-  private phoneTimer?: ReturnType<typeof setTimeout>;
+  private phoneTimer?: ReturnType<typeof setInterval>;
   private phoneStopped = false;
+  /** 폰을 읽는 중인지. 겹쳐 불린 타이머가 읽기를 늘리지 못하게 한다. */
+  private phoneBusy = false;
+  private phoneLastPoll = 0;
+  /** 마지막에 폰이 답했는지. 답하지 않으면 드물게 읽는다. */
+  private phoneOk = true;
   /** 마지막으로 그린 홈 상태 글의 폰 부분. 바뀔 때만 다시 그린다. */
   private lastPhoneLabel = '';
 
@@ -666,16 +682,36 @@ export class GlassesUI {
     this.setPolling(this.sseDown);
   }
 
-  /** 폰의 타이머·물 마시기를 주기적으로 읽는다. */
+  /**
+   * 폰의 타이머·물 마시기를 주기적으로 읽는다.
+   *
+   * 예전에는 읽고 나서 다음 읽기를 setTimeout으로 거는 사슬이었다. 그런데
+   * 안경 웹뷰는 화면이 꺼진 사이 미뤄 둔 타이머를 한꺼번에 부를 때 같은 것을
+   * 두 번 부르기도 한다. 그때마다 사슬이 둘로 갈라져 1분마다 네 배로 늘었고
+   * (폰 읽기 12 → 48 → 250 → 948 → 3360 → 12271번/분), 웹뷰가 CPU·메모리를
+   * 다 먹고 iOS에 죽었다. 그래서 간격 하나(setInterval)로 돌리고, 읽는 중이거나
+   * 간격이 안 됐으면 건너뛴다. 타이머가 몇 번 겹쳐 불려도 읽기는 늘지 않는다.
+   */
   private watchPhone(): void {
-    clearTimeout(this.phoneTimer);
-    const tick = async (): Promise<void> => {
-      const ok = await this.refreshPhone();
-      if (this.phoneStopped) return;
-      this.phoneTimer = setTimeout(() => void tick(), ok ? PHONE_POLL_MS : PHONE_POLL_SLOW_MS);
-      (this.phoneTimer as { unref?: () => void }).unref?.();
-    };
-    void tick();
+    clearInterval(this.phoneTimer);
+    this.phoneTimer = setInterval(() => void this.pollPhone(false), PHONE_TICK_MS);
+    (this.phoneTimer as { unref?: () => void }).unref?.();
+    void this.pollPhone(true);
+  }
+
+  /** 한 번 읽는다. force가 아니면 간격을 지킨다. 동시에 둘은 읽지 않는다. */
+  private async pollPhone(force: boolean): Promise<void> {
+    if (this.phoneStopped || this.phoneBusy) return;
+    const gap = this.phoneOk ? PHONE_POLL_MS : PHONE_POLL_SLOW_MS;
+    const now = Date.now();
+    if (!force && now - this.phoneLastPoll < gap - 1000) return;
+    this.phoneBusy = true;
+    this.phoneLastPoll = now;
+    try {
+      this.phoneOk = await this.refreshPhone();
+    } finally {
+      this.phoneBusy = false;
+    }
   }
 
   /**
@@ -683,7 +719,9 @@ export class GlassesUI {
    * 폰이 답했으면 true.
    */
   private async refreshPhone(): Promise<boolean> {
-    if (!agentCli.canPoll) return false;
+    // 로그인 전에는 읽지 않는다. 키 없이 두드리면 401이 나고, 그 401이 로그인
+    // 직후에 도착하면 멀쩡한 로그인이 풀린 것으로 처리된다.
+    if (!agentCli.canPoll || !agentCli.isConfigured || !agentCli.connection.apiKey) return false;
     let events: PhoneEvent[] = [];
     try {
       const next = await agentCli.phoneStatus();
@@ -821,8 +859,8 @@ export class GlassesUI {
     const after = this.sessions.map((s) => s.id).join(',');
 
     // 세션이 줄었으면 커서를 목록 안으로 되돌린다.
-    if (this.cursor > this.sessions.length - 1) {
-      this.cursor = Math.max(this.sessions.length - 1, 0);
+    if (this.cursor > this.shownSessions().length - 1) {
+      this.cursor = Math.max(this.shownSessions().length - 1, 0);
     }
     this.watchLive();
     this.hooks.onSessionsChanged?.(this.sessions, this.cursor);
@@ -963,12 +1001,13 @@ export class GlassesUI {
    * 오른쪽 카드에 두어 글자만 고친다.
    */
   private sessionsView(): SessionsView {
-    const rows = this.sessions.map((s) => ({
+    const all = this.sessions.map((s) => ({
       state: this.statusOf(s),
       title: s.title || '새 대화',
       meta: timeAgo(s.lastActivityAt),
     }));
-    const count = (...states: string[]) => rows.filter((r) => states.includes(r.state)).length;
+    const rows = all.slice(0, LIST_MAX);
+    const count = (...states: string[]) => all.filter((r) => states.includes(r.state)).length;
     const busy = count('running');
     const approvals = count('pending', 'waiting');
 
@@ -996,13 +1035,14 @@ export class GlassesUI {
    * 탭 처리가 그 자리를 동작으로 읽는다.
    */
   private notificationsView(): NotificationsView {
-    const rows = this.notifications.map((n) => ({
+    const rows = this.shownNotifications().map((n) => ({
       kind: n.kind,
       read: Boolean(n.readAt),
       title: n.title,
       meta: timeAgo(n.createdAt),
     }));
-    const unreadOf = (k: NoticeKind) => rows.filter((r) => r.kind === k && !r.read).length;
+    // 갈래별 수는 목록에 안 보이는 것까지 센다.
+    const unreadOf = (k: NoticeKind) => this.notifications.filter((n) => n.kind === k && !n.readAt).length;
     return {
       title: '$ relay ~/inbox',
       status: [this.unread > 0 ? `● 새 ${this.unread}` : '', clock()].filter(Boolean).join('   '),
@@ -1047,7 +1087,7 @@ export class GlassesUI {
     return {
       title: this.checkGlobal ? '$ ~/todo' : `$ ~/${s?.title || '새 대화'}/todo`,
       status: [`${done} / ${this.checklist.length}`, clock()].join('   '),
-      items: this.checklist.map((i) => ({ done: i.done, text: i.text })),
+      items: this.shownChecklist().map((i) => ({ done: i.done, text: i.text })),
       action: this.checklist.length > 0 ? '완료 항목 치우기' : undefined,
       progress: { done, total: this.checklist.length },
       hint: '● 체크    ●● 뒤로',
@@ -1066,7 +1106,7 @@ export class GlassesUI {
     return {
       title: '$ ~/cmd',
       status: [cron > 0 ? `예약 ${cron}` : '', clock()].filter(Boolean).join('   '),
-      rows: this.snippets.map((x) => ({
+      rows: this.shownSnippets().map((x) => ({
         label: x.label,
         ...(x.kind === 'cron' && x.everyMinutes ? { cron: x.everyMinutes } : {}),
       })),
@@ -1141,7 +1181,7 @@ export class GlassesUI {
     return {
       title: `$ ~/${s?.title || '새 대화'}`,
       status: clock(),
-      rows: this.historyItems().map((h) => ({
+      rows: this.shownHistory().map((h) => ({
         kind: h.kind,
         text: h.full.replace(/\n/g, ' ').trim() || '(내용 없음)',
       })),
@@ -1215,6 +1255,29 @@ export class GlassesUI {
    * 목록이 길어져 정작 주고받은 말을 찾기 어려우므로 여기서는 빼고,
    * 고르면 그 전문을 보여준다.
    */
+  /** 목록에 보이는 세션(G2 목록 한도까지). */
+  private shownSessions(): SessionInfo[] {
+    return this.sessions.slice(0, LIST_MAX);
+  }
+
+  /** 목록에 보이는 알림. 최신이 앞이라 앞에서 자른다. */
+  private shownNotifications(): Notification[] {
+    return this.notifications.slice(0, LIST_ROWS);
+  }
+
+  private shownChecklist(): ChecklistItem[] {
+    return this.checklist.slice(0, LIST_ROWS);
+  }
+
+  /** 목록에 보이는 대화. 최근 것이 쓸모 있으니 뒤에서 자른다. */
+  private shownHistory(): { line: string; full: string; kind: 'me' | 'ai' }[] {
+    return this.historyItems().slice(-LIST_ROWS);
+  }
+
+  private shownSnippets(): Snippet[] {
+    return this.snippets.slice(0, LIST_MAX);
+  }
+
   private historyItems(): { line: string; full: string; kind: 'me' | 'ai' }[] {
     const out: { line: string; full: string; kind: 'me' | 'ai' }[] = [];
     for (const e of this.history) {
@@ -1425,7 +1488,7 @@ export class GlassesUI {
           await this.glasses.showSessions(this.sessionsView());
           return;
         }
-        const items: Item[] = this.sessions.map((s) => ({
+        const items: Item[] = this.shownSessions().map((s) => ({
           text: s.title || '새 대화',
           state: this.statusOf(s),
         }));
@@ -1444,7 +1507,7 @@ export class GlassesUI {
           await this.glasses.showHistory(this.historyView(s));
           return;
         }
-        const items = this.historyItems().map((h) => h.line);
+        const items = this.shownHistory().map((h) => h.line);
         // 리스트는 비어 있으면 만들 수 없다.
         if (items.length === 0) items.push('(주고받은 기록이 없습니다)');
         // 진행 상황을 보거나 말을 거는 자리는 항상 맨 아래에 둔다.
@@ -1459,7 +1522,7 @@ export class GlassesUI {
           await this.glasses.showNotifications(this.notificationsView());
           return;
         }
-        const items: Item[] = this.notifications.map((n) => ({
+        const items: Item[] = this.shownNotifications().map((n) => ({
           text: n.title,
           state: n.readAt ? 'read' : 'unread',
         }));
@@ -1516,7 +1579,7 @@ export class GlassesUI {
         }
         await this.glasses.showList(
           `명령 ${this.cmdCursor + 1}/${this.snippets.length} · 더블탭 뒤로`,
-          this.snippets.map((x, i) => ({
+          this.shownSnippets().map((x, i) => ({
             text: x.kind === 'cron' ? `${x.label} (예약)` : x.label,
             state: i === this.cmdCursor ? 'running' : undefined,
           })),
@@ -1568,7 +1631,7 @@ export class GlassesUI {
           return;
         }
         const done = this.checklist.filter((i) => i.done).length;
-        const items: Item[] = this.checklist.map((i) => ({
+        const items: Item[] = this.shownChecklist().map((i) => ({
           text: i.text,
           state: i.done ? 'done' : 'todo',
         }));
@@ -2187,7 +2250,7 @@ export class GlassesUI {
     }
 
     if (selectedIndex !== undefined && this.screen === 'sessions') {
-      this.cursor = Math.min(Math.max(selectedIndex, 0), Math.max(this.sessions.length - 1, 0));
+      this.cursor = Math.min(Math.max(selectedIndex, 0), Math.max(this.shownSessions().length - 1, 0));
       this.hooks.onSessionsChanged?.(this.sessions, this.cursor);
     }
 
@@ -2242,13 +2305,13 @@ export class GlassesUI {
 
     if (this.screen === 'sessions') {
       if (gesture === 'doubleTap') return this.goHome();
-      if (this.moveCursor(gesture, selectedIndex, 'cursor', this.sessions.length)) {
+      if (this.moveCursor(gesture, selectedIndex, 'cursor', this.shownSessions().length)) {
         this.hooks.onSessionsChanged?.(this.sessions, this.cursor);
         await this.render();
         return;
       }
       if (gesture === 'tap') {
-        const target = this.sessions[this.cursor];
+        const target = this.shownSessions()[this.cursor];
         if (target) await this.openHistory(target.id);
       }
       return;
@@ -2261,7 +2324,7 @@ export class GlassesUI {
         await this.render();
         return;
       }
-      const items = this.historyItems();
+      const items = this.shownHistory();
       // 맨 끝의 '대화 이어서 보기' 한 칸을 더 센다.
       if (this.moveCursor(gesture, selectedIndex, 'histCursor', items.length + 1)) {
         await this.render();
@@ -2292,13 +2355,13 @@ export class GlassesUI {
     // 알림 목록.
     if (this.screen === 'notifications') {
       if (gesture === 'doubleTap') return this.goHome();
-      const count = this.notifications.length;
+      const count = this.shownNotifications().length;
       if (this.moveCursor(gesture, selectedIndex, 'notifCursor', count + (count > 0 ? 1 : 0))) {
         await this.render();
         return;
       }
       if (gesture === 'tap') {
-        const n = this.notifications[this.notifCursor];
+        const n = this.shownNotifications()[this.notifCursor];
         if (n) await this.openNotification(n);
         else if (count > 0) await this.readAllNotifications();
       }
@@ -2332,12 +2395,12 @@ export class GlassesUI {
     // 명령 목록: 골라서 탭하면 실행한다.
     if (this.screen === 'commands') {
       if (gesture === 'doubleTap') return this.goHome();
-      if (this.moveCursor(gesture, selectedIndex, 'cmdCursor', this.snippets.length)) {
+      if (this.moveCursor(gesture, selectedIndex, 'cmdCursor', this.shownSnippets().length)) {
         await this.render();
         return;
       }
       if (gesture === 'tap') {
-        const s = this.snippets[this.cmdCursor];
+        const s = this.shownSnippets()[this.cmdCursor];
         if (s) await this.runSnippet(s);
       }
       return;
@@ -2426,7 +2489,7 @@ export class GlassesUI {
       if (gesture === 'tap') {
         this.checkCursor = picked;
         // 목록 끝 한 칸은 '완료 항목 치우기'다.
-        if (this.checklist.length > 0 && picked >= this.checklist.length) {
+        if (this.checklist.length > 0 && picked >= this.shownChecklist().length) {
           this.checklist = this.checkGlobal
             ? await agentCli.clearDoneGlobalChecklist()
             : await agentCli.clearDoneChecklist(this.activeId);
@@ -2645,7 +2708,7 @@ export class GlassesUI {
     this.lifecycleStop?.();
     clearInterval(this.pollTimer);
     this.phoneStopped = true;
-    clearTimeout(this.phoneTimer);
+    clearInterval(this.phoneTimer);
     for (const stop of this.watchers.values()) stop();
     this.watchers.clear();
     this.setSpinning(false);

@@ -110,6 +110,12 @@ test('타이머가 돌면 홈 상태에 남은 시간·물 잔 수가 붙고, �
     phoneStatus: async () => next,
   });
   Object.defineProperty(agentCli, 'canPoll', { get: () => true, configurable: true });
+  // 폰은 로그인한 뒤에만 읽는다.
+  Object.defineProperty(agentCli, 'isConfigured', { get: () => true, configurable: true });
+  Object.defineProperty(agentCli, 'connection', {
+    get: () => ({ baseUrl: 'http://127.0.0.1:4100', apiKey: 'KEY' }),
+    configurable: true,
+  });
   const ui = new GlassesUI(glasses, { onLog: () => {} });
   try {
     await ui.start();
@@ -134,7 +140,7 @@ test('타이머가 돌면 홈 상태에 남은 시간·물 잔 수가 붙고, �
     // 폰이 이 경로를 모르면(404) 원래 선으로 돌린다.
     fail = new AgentCliError('없는 경로', 404);
     assert.equal(await refresh(), false);
-    assert.equal(bars.at(-1), null);
+    assert.equal(bars.at(-1), null, '폰이 모르면 원래 선으로 돌린다');
 
     // 다시 붙으면(돌던 중) 이어 보이고, 끝나면 알린다.
     fail = null;
@@ -147,5 +153,70 @@ test('타이머가 돌면 홈 상태에 남은 시간·물 잔 수가 붙고, �
     await ui.stop();
     Object.assign(agentCli, orig);
     delete (agentCli as { canPoll?: boolean }).canPoll;
+    delete (agentCli as { isConfigured?: boolean }).isConfigured;
+    delete (agentCli as { connection?: unknown }).connection;
+  }
+});
+
+test('타이머가 겹쳐 불려도 폰 읽기는 늘지 않는다', async () => {
+  // 안경 웹뷰는 미뤄 둔 타이머를 두 번 부르기도 한다. 예전에는 그때마다 읽기
+  // 사슬이 갈라져 1분마다 네 배로 늘다 웹뷰가 죽었다.
+  const glasses = {
+    name: 'stub',
+    isVoiceEnabled: false,
+    async connect() {},
+    async disconnect() {},
+    async showList() {},
+    async showText() {},
+    async showHome() {},
+    speak() {},
+    stopSpeaking() {},
+    setVoiceEnabled() {},
+    async saveSetting() {},
+    async loadSetting() {
+      return '';
+    },
+    onGesture() {
+      return () => {};
+    },
+  } as unknown as GlassesAdapter;
+  let reads = 0;
+  const orig = { ...agentCli };
+  Object.assign(agentCli, {
+    listSessions: async () => [],
+    listNotifications: async () => ({ items: [], unread: 0 }),
+    getGlobalChecklist: async () => [],
+    phoneStatus: async () => {
+      reads += 1;
+      await new Promise((res) => setTimeout(res, 20));
+      return status({ phase: 'running', duration: 600, remaining: 300 });
+    },
+  });
+  Object.defineProperty(agentCli, 'canPoll', { get: () => true, configurable: true });
+  Object.defineProperty(agentCli, 'isConfigured', { get: () => true, configurable: true });
+  Object.defineProperty(agentCli, 'connection', {
+    get: () => ({ baseUrl: 'http://127.0.0.1:4100', apiKey: 'KEY' }),
+    configurable: true,
+  });
+  const ui = new GlassesUI(glasses, { onLog: () => {} });
+  const poll = (force: boolean) => (ui as unknown as { pollPhone(f: boolean): Promise<void> }).pollPhone(force);
+  try {
+    await ui.start();
+    await new Promise((res) => setTimeout(res, 50));
+    const afterStart = reads;
+
+    // 같은 순간에 50번 불려도(겹친 타이머) 읽는 중이면 건너뛴다.
+    await Promise.all(Array.from({ length: 50 }, () => poll(true)));
+    assert.equal(reads - afterStart, 1, '읽는 중에 또 읽었다');
+
+    // 간격이 안 됐으면 몇 번을 불려도 읽지 않는다.
+    await Promise.all(Array.from({ length: 50 }, () => poll(false)));
+    assert.equal(reads - afterStart, 1, '간격 전에 또 읽었다');
+  } finally {
+    await ui.stop();
+    Object.assign(agentCli, orig);
+    delete (agentCli as { canPoll?: boolean }).canPoll;
+    delete (agentCli as { isConfigured?: boolean }).isConfigured;
+    delete (agentCli as { connection?: unknown }).connection;
   }
 });

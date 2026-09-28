@@ -11,10 +11,10 @@
     "test": "tsx --test test/*.test.ts"
   },
   "peerDependencies": {
-    "@evenrealities/even_hub_sdk": "^0.0.15"
+    "@evenrealities/even_hub_sdk": "^0.0.16"
   },
   "devDependencies": {
-    "@evenrealities/even_hub_sdk": "^0.0.15",
+    "@evenrealities/even_hub_sdk": "^0.0.16",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   },

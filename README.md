@@ -76,6 +76,7 @@ npm test
 - [glasses-g2](https://github.com/foncdev/glasses-g2) — G2 호스트 앱
 - [relay-service](https://github.com/foncdev/relay-service) — 중계 서버
 - [claudeAgent](https://github.com/foncdev/claudeAgent) — CLI 제어 매니저
+- [notify-agent](https://github.com/foncdev/notify-agent) — 맥 알림을 relay-service로 넘겨 안경 팝업으로 띄운다
 
 ## 라이선스
 

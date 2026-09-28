@@ -200,19 +200,24 @@ test('더블탭은 한 단계씩 위로 올라간다', async () => {
     await settle();
     assert.equal(r.screen, 'home', '세션 목록에서 홈으로');
 
-    // 최상위에서는 더 올라가지 않는다.
+    // 최상위에서는 더 올라가지 않고 화면 꺼짐·종료하기·취소를 고른다.
     fire('doubleTap');
     await settle();
-    assert.equal(r.screen, 'home');
+    assert.equal(r.screen, 'home-menu');
   } finally {
     restore();
   }
 });
 
-test('홈에서 더블탭하면 화면이 바로 꺼지고, 다음 조작은 켜기만 한다', async () => {
+test('홈에서 더블탭하면 화면 꺼짐·종료하기·취소를 고르고, 화면 꺼짐 뒤 다음 조작은 켜기만 한다', async () => {
   const { r, shown, texts, fire, restore } = await atHome();
   try {
     fire('doubleTap');
+    await settle();
+    assert.equal(r.screen, 'home-menu');
+    assert.deepEqual(shown.at(-1)!.items, ['화면 꺼짐', '종료하기', '취소']);
+
+    fire('tap', 0); // 화면 꺼짐
     await settle();
     assert.equal(r.screenOff, true, '무조작 타이머를 기다리지 않고 꺼진다');
     assert.equal(texts.at(-1), ' ', '공백 한 칸으로 화면을 비운다');
@@ -576,6 +581,43 @@ test('타이머 · 물 화면에서 폰의 타이머를 시작·멈추고 물을
     delete (agentCli as { canPoll?: boolean }).canPoll;
     delete (agentCli as { isConfigured?: boolean }).isConfigured;
     delete (agentCli as { connection?: unknown }).connection;
+    restore();
+  }
+});
+
+test('홈 더블탭 선택지: 취소·더블탭은 홈으로, 종료하기는 안경앱을 닫는다', async () => {
+  const { r, shown, fire, glasses, restore } = await atHome();
+  let closed = 0;
+  (glasses as unknown as { disconnect(): Promise<void> }).disconnect = async () => {
+    closed += 1;
+  };
+  try {
+    fire('doubleTap');
+    await settle();
+    fire('tap', 2); // 취소
+    await settle();
+    assert.equal(r.screen, 'home');
+    assert.ok(shown.at(-1)!.items.includes('설정'), '홈 메뉴로 돌아온다');
+
+    fire('doubleTap');
+    await settle();
+    fire('doubleTap'); // 선택지에서 더블탭도 취소
+    await settle();
+    assert.equal(r.screen, 'home');
+    assert.equal(closed, 0);
+
+    fire('doubleTap');
+    await settle();
+    fire('tap', 1); // 종료하기
+    await settle();
+    assert.equal(closed, 1, '화면 컨테이너를 닫아 안경앱을 나가야 한다');
+
+    // 폰 화면의 주기 갱신이 돌아도 닫은 화면을 다시 그리지 않는다.
+    const drawn = shown.length;
+    await r.render();
+    await (r as unknown as { refresh(): Promise<void> }).refresh();
+    assert.equal(shown.length, drawn, '종료한 뒤 다시 그렸다');
+  } finally {
     restore();
   }
 });

@@ -75,6 +75,7 @@ type Screen =
   | 'commands'
   | 'command-result'
   | 'phone'
+  | 'home-menu'
   | 'settings';
 
 /** home에서 한 단계 아래로 내려갈 메뉴. 순서가 곧 커서 위치다. */
@@ -126,6 +127,15 @@ const MENU = [
   { label: '타이머 · 물', screen: 'phone' as const },
   { label: '설정', screen: 'settings' as const },
 ];
+
+/**
+ * 홈에서 더블탭하면 뜨는 선택지.
+ *
+ * 예전에는 더블탭이 곧바로 화면을 껐다. 그런데 Relay가 켜져 있는 동안은 안경이
+ * 카카오톡·전화 같은 시스템 알림을 가려서, 안 쓸 때 빠르게 나갈 길이 필요했다.
+ * 화면 끄기가 가장 흔하므로 맨 위에 둔다.
+ */
+const HOME_MENU = ['화면 꺼짐', '종료하기', '취소'] as const;
 
 /**
  * 화면이 꺼지기까지의 시간 선택지.
@@ -475,6 +485,10 @@ export class GlassesUI {
   private setCursor = 0;
   /** 타이머·물 화면의 커서. */
   private phoneCursor = 0;
+  /** 홈 더블탭 선택지의 커서. */
+  private homeMenuCursor = 0;
+  /** 종료했는지. 폰 화면(웹뷰)은 남아 주기 갱신이 돌 수 있어, 그려서 다시 열지 않게 막는다. */
+  private stopped = false;
 
   /** 서버가 쌓아둔 알림. */
   private notifications: Notification[] = [];
@@ -854,6 +868,7 @@ export class GlassesUI {
 
   /** 세션 목록을 다시 읽는다. */
   async refresh(): Promise<void> {
+    if (this.stopped) return;
     const before = this.sessions.map((s) => s.id).join(',');
     this.sessions = await agentCli.listSessions();
     const after = this.sessions.map((s) => s.id).join(',');
@@ -1428,7 +1443,8 @@ export class GlassesUI {
 
   async render(): Promise<void> {
     // 꺼진 상태에서는 그리지 않는다. 깨우는 건 조작이나 새 이벤트뿐이다.
-    if (this.screenOff) return;
+    // 종료한 뒤에도 그리지 않는다 — 그리면 닫은 화면이 다시 열린다.
+    if (this.screenOff || this.stopped) return;
     try {
       // 1) 권한 요청이 최우선. 사용자가 답해야 작업이 진행된다.
       if (this.pending) {
@@ -1594,6 +1610,12 @@ export class GlassesUI {
           return;
         }
         await this.glasses.showText(resultView(this.cmdResult));
+        return;
+      }
+
+      // 홈 더블탭 선택지.
+      if (this.screen === 'home-menu') {
+        await this.glasses.showList('홈 · 더블탭 취소', [...HOME_MENU]);
         return;
       }
 
@@ -1885,7 +1907,8 @@ export class GlassesUI {
       | 'histCursor'
       | 'checkCursor'
       | 'cmdCursor'
-      | 'phoneCursor',
+      | 'phoneCursor'
+      | 'homeMenuCursor',
     count: number,
   ): boolean {
     const last = Math.max(count - 1, 0);
@@ -2295,10 +2318,13 @@ export class GlassesUI {
         await this.render();
         return;
       }
-      // 최상위라 더블탭으로 갈 곳이 없다. 대신 화면을 바로 끈다.
-      // 무조작 타이머를 기다리지 않고 끄고 싶을 때 쓴다. 다시 켜는 건
-      // 여느 때처럼 아무 조작 한 번이다.
-      if (gesture === 'doubleTap') return this.sleep();
+      // 최상위라 더블탭으로 갈 곳이 없다. 대신 화면 끄기·종료·취소를 고른다.
+      if (gesture === 'doubleTap') {
+        this.screen = 'home-menu';
+        this.homeMenuCursor = 0;
+        await this.render();
+        return;
+      }
       if (gesture === 'tap') await this.openMenu(MENU[this.menuCursor]?.screen);
       return;
     }
@@ -2426,6 +2452,30 @@ export class GlassesUI {
         if (s) await this.runSnippet(s, true);
       }
       return;
+    }
+
+    // 홈 더블탭 선택지: 화면 꺼짐 · 종료하기 · 취소. 더블탭은 취소다.
+    if (this.screen === 'home-menu') {
+      if (gesture === 'doubleTap') return this.goHome();
+      if (this.moveCursor(gesture, selectedIndex, 'homeMenuCursor', HOME_MENU.length)) {
+        await this.render();
+        return;
+      }
+      if (gesture !== 'tap') return;
+      const choice = HOME_MENU[this.homeMenuCursor];
+      if (choice === '화면 꺼짐') {
+        // 다시 켜면 홈이 보이게 먼저 홈으로 돌린다. 켜는 것은 여느 때처럼 아무 조작 한 번이다.
+        this.screen = 'home';
+        return this.sleep();
+      }
+      if (choice === '종료하기') {
+        // 이미 여기서 한 번 골랐으니 시스템 확인 창 없이 바로 나간다.
+        // 타이머·구독을 풀고 화면 컨테이너를 닫는다(disconnect).
+        this.log('안경앱을 종료합니다.', 'ok');
+        await this.stop();
+        return;
+      }
+      return this.goHome();
     }
 
     // 타이머·물: 누르면 폰에 조작을 보낸다.
@@ -2702,6 +2752,7 @@ export class GlassesUI {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.detailStop?.();
     this.eventStop?.();

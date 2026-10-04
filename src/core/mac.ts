@@ -42,11 +42,17 @@ export interface CaptionLine {
   text: string;
   final: boolean;
   at: string;
+  /** 옮긴 글. 줄이 굳은 뒤 같은 id로 한 번 더 온다. */
+  translation?: string;
 }
 
 export interface CaptionsState {
   running: boolean;
   stoppedReason?: string;
+  /** 옮기는 언어(ko 등). */
+  translateTo?: string;
+  /** 번역이 안 되는 까닭(translation_not_installed 등). */
+  translateError?: string;
 }
 
 export interface MacEvent {
@@ -98,6 +104,11 @@ export function reasonText(reason: string | undefined): string {
       return m.reasonCalendar;
     case 'no_app':
       return m.reasonNoApp;
+    case 'translation_not_installed':
+      return m.reasonTranslationModel;
+    case 'translation_unsupported':
+    case 'macos_too_old':
+      return m.reasonMacOS;
     default:
       return m.reasonUnavailable;
   }
@@ -212,10 +223,13 @@ export function captionsPage(
   const hint = running ? m.captionsHintOn : m.captionsHintOff;
   const room = MAC_ROWS - 2;
 
-  const texts = [...lines.slice(-4).map((l) => l.text), ...(partial?.text ? [partial.text] : [])];
+  // 옮긴 글이 있으면 그걸 보인다. 안경은 좁아 둘 다 띄우면 두 줄 남짓밖에 안 남는다.
+  // 말하는 중인 줄은 원문 그대로다 — 굳어야 옮긴다.
+  const texts = [...lines.slice(-4).map((l) => l.translation ?? l.text), ...(partial?.text ? [partial.text] : [])];
   let rows = texts.flatMap((t) => wrapLines(t, MAC_COLS, room));
   rows = rows.slice(-room);
-  if (error) rows = [clip(error, MAC_COLS), ...rows.slice(-(room - 1))];
+  const problem = error ?? (state?.translateError ? reasonText(state.translateError) : undefined);
+  if (problem) rows = [clip(problem, MAC_COLS), ...rows.slice(-(room - 1))];
   if (rows.length === 0) rows = [running ? m.captionsEmpty : m.captionsIdle];
   return page(head, rows, hint);
 }

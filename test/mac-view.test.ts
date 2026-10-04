@@ -86,6 +86,18 @@ test('자막: 맨 아래가 지금 하는 말이고, 넘치면 위가 밀려난�
   assert.equal(rows.at(-1), msg().captionsHintOn);
 });
 
+test('자막: 옮긴 글이 있으면 그걸 보이고, 번역 언어가 없으면 맨 위에 알린다', () => {
+  const lines: CaptionLine[] = [
+    { id: 1, text: 'We decided to ship.', final: true, at: '', translation: '출시하기로 했습니다.' },
+    { id: 2, text: 'QA is next.', final: true, at: '' },
+  ];
+  const rows = captionsPage(lines, { id: 3, text: 'and then', final: false, at: '' }, { running: true }, undefined).split('\n');
+  assert.deepEqual(rows.slice(1, 4), ['출시하기로 했습니다.', 'QA is next.', 'and then']);
+
+  const missing = captionsPage(lines, undefined, { running: true, translateError: 'translation_not_installed' }, undefined).split('\n');
+  assert.equal(missing[1], '맥에서 번역 언어를 내려받으세요');
+});
+
 test('자막이 꺼져 있으면 탭하라고 알린다', () => {
   const rows = captionsPage([], undefined, { running: false }, undefined).split('\n');
   assert.equal(rows[1], msg().captionsIdle);

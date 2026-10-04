@@ -208,7 +208,7 @@ async function harness(responses: Record<string, unknown>, caps = [
       calls.push({ path, body });
       const r = responses[path];
       if (r instanceof Error) throw r;
-      return typeof r === 'function' ? (r as () => unknown)() : r;
+      return typeof r === 'function' ? (r as (body: unknown) => unknown)(body) : r;
     },
     streamMac: (path: string, _types: string[], onEvent: (type: string, data: unknown) => void) => {
       const s = { path, closed: false, push: (type: string, data: unknown) => onEvent(type, data) };
@@ -432,6 +432,63 @@ test('텔레프롬프터: 지금 줄에 ▷, 앞 줄 하나, 10줄·화면 폭 �
   assert.ok(rows[1].startsWith('5번째'), '앞 줄 하나');
   assert.ok(rows.some((r) => r.startsWith('▷ 6번째')), '지금 줄 표시');
   assert.equal(rows.at(-1), msg().prompterHintOn);
+});
+
+const paged = (page: number, extra: Partial<PrompterState> = {}): PrompterState => ({
+  ...script(page * 3),
+  page, pages: 7, slide: 2, pageLine: 1, mode: 'manual', playing: false,
+  pageLines: ['둘째 쪽 첫 화면의 첫 줄입니다', '둘째 줄은 조금 더 길게 이어지는 원고 문장입니다', '셋째 줄'],
+  nextPageFirst: '다음 화면 첫 줄은 이렇습니다',
+  ...extra,
+});
+
+test('텔레프롬프터 화면 단위: 쪽·화면 번호, 한 화면 통째로, 다음 화면 첫 줄 미리 보기, 10줄·폭 안', () => {
+  for (const locale of ['ko', 'en'] as const) {
+    setLocale(locale);
+    try {
+      fitsScreen(prompterPage(paged(2), undefined));
+      fitsScreen(prompterPage(paged(2, { following: true }), '마이크 권한이 필요합니다 '.repeat(5)));
+      fitsScreen(prompterPage(paged(2, { mode: 'timeline', playing: true }), undefined));
+    } finally {
+      setLocale('ko');
+    }
+  }
+  const rows = prompterPage(paged(2), undefined).split('\n');
+  assert.equal(rows[0], '텔레프롬프터 · 2쪽 · 3/7');
+  assert.equal(rows[1], '둘째 쪽 첫 화면의 첫 줄입니다');
+  assert.ok(!rows.some((r) => r.startsWith('▷')), '손으로 넘길 때는 줄 표시가 없다');
+  assert.ok(rows.includes('다음: 다음 화면 첫 줄은 이렇습니다'));
+  assert.equal(rows.at(-1), msg().prompterHintPageOff);
+  const timed = prompterPage(paged(2, { mode: 'timeline', playing: true }), undefined).split('\n');
+  assert.equal(timed[0], '텔레프롬프터 · 2쪽 · 3/7 · 시간대로');
+  assert.ok(timed.some((r) => r.startsWith('▷ 둘째 줄')), '흘릴 때는 지금 줄 표시');
+  assert.equal(timed.at(-1), msg().prompterHintPagePlaying);
+});
+
+test('텔레프롬프터 화면 단위: 위아래는 화면 넘기기, 시간대로면 탭은 흘리기·멈추기', async () => {
+  let state = paged(0);
+  const h = await harness({
+    '/prompter/state': () => state,
+    '/prompter/page': (body: unknown) => (state = paged(Math.max(0, (state.page ?? 0) + (body as { delta: number }).delta), { mode: state.mode })),
+    '/prompter/play': (body: unknown) => (state = { ...state, playing: (body as { on: boolean }).on }),
+  });
+  try {
+    await h.r.openMenu('mac');
+    await h.fire('tap', 4);
+    await h.fire('down');
+    await h.fire('down');
+    await h.fire('up');
+    assert.deepEqual(h.calls.at(-1), { path: '/prompter/page', body: { delta: -1 } });
+    assert.match(h.texts.at(-1)!, /· 2\/7/);
+    state = { ...state, mode: 'timeline' };
+    h.streams.at(-1)!.push('state', state);
+    await new Promise((res) => setTimeout(res, 20));
+    await h.fire('tap');
+    assert.deepEqual(h.calls.at(-1), { path: '/prompter/play', body: { on: true } });
+    assert.match(h.texts.at(-1)!, /시간대로/);
+  } finally {
+    h.restore();
+  }
 });
 
 test('텔레프롬프터: 원고가 없으면 탭으로 맥 클립보드를 불러오고, 있으면 탭으로 따라가기를 켠다. 꺼지지 않는다', async () => {

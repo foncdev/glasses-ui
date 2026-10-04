@@ -3006,13 +3006,16 @@ export class GlassesUI {
       return;
     }
 
-    // 텔레프롬프터: 탭은 불러오기(원고 없을 때) 또는 말 따라가기, 위·아래는 이전·다음 줄.
+    // 텔레프롬프터: 탭은 불러오기(원고 없을 때)·말 따라가기·시간대로 흘리기, 위·아래는 이전·다음 화면(옛 맥은 줄).
+    // 쪽이 나뉜 원고에서 다음 쪽 원고로 넘어가면 맥이 발표 슬라이드도 넘긴다.
     if (this.screen === 'mac-prompter') {
+      const paged = (this.macPrompter?.pages ?? 0) > 0;
       if (gesture === 'doubleTap') return this.backToMac();
-      if (gesture === 'up') return this.prompterCommand('/prompter/prev');
-      if (gesture === 'down') return this.prompterCommand('/prompter/next');
+      if (gesture === 'up') return paged ? this.prompterCommand('/prompter/page', { delta: -1 }) : this.prompterCommand('/prompter/prev');
+      if (gesture === 'down') return paged ? this.prompterCommand('/prompter/page', { delta: 1 }) : this.prompterCommand('/prompter/next');
       if (gesture === 'tap') {
         if (!this.macPrompter?.hasScript) return this.prompterCommand('/prompter/load-clipboard');
+        if (this.macPrompter.mode === 'timeline') return this.prompterCommand('/prompter/play', { on: !this.macPrompter.playing });
         return this.prompterCommand('/prompter/follow', { on: !this.macPrompter.following });
       }
       return;

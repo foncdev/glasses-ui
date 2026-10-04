@@ -72,6 +72,18 @@ export interface PrompterState {
   start: number;
   lines: string[];
   error?: string;
+  /** 한 화면(페이지)씩 넘기는 원고(mac-agent 0.1.1부터). 없으면 줄 단위로 보인다. */
+  page?: number;
+  pages?: number;
+  pageLines?: string[];
+  /** 지금 줄이 페이지에서 몇째 줄인지(따라가기·시간대로일 때 ▷) */
+  pageLine?: number;
+  /** 이 페이지가 속한 쪽(슬라이드) */
+  slide?: number;
+  nextPageFirst?: string;
+  /** manual · timeline */
+  mode?: string;
+  playing?: boolean;
 }
 
 export interface MacShortcut {
@@ -281,6 +293,7 @@ export function prompterPage(state: PrompterState | undefined, error: string | u
   if (!state.hasScript) {
     return page(m.macPrompter, [...(error ? [clip(error, MAC_COLS)] : []), m.prompterEmpty], m.prompterLoadHint);
   }
+  if ((state.pages ?? 0) > 0 && state.pageLines) return prompterPagedView(state, error);
   const head = `${m.macPrompter} · ${state.line + 1}/${state.total} · ${state.following ? m.prompterFollowing : m.prompterManual}`;
   const room = MAC_ROWS - 2 - (error ? 1 : 0);
   const rows: string[] = [];
@@ -294,6 +307,35 @@ export function prompterPage(state: PrompterState | undefined, error: string | u
   const problem = error ?? (state.error ? m.prompterNoMic : undefined);
   const body = problem ? [clip(problem, MAC_COLS), ...rows.slice(0, room)] : rows.slice(0, room);
   return page(head, body, state.following ? m.prompterHintOn : m.prompterHintOff);
+}
+
+/**
+ * 페이지로 나뉜 원고: 한 화면(빈 줄로 나눈 문단, 4줄까지)을 통째로 보이고, 위아래로 화면을 넘긴다.
+ * 머리에 쪽(슬라이드)과 화면 번호. 남는 줄이 있으면 다음 화면 첫 줄을 미리 보인다.
+ */
+function prompterPagedView(state: PrompterState, error: string | undefined): string {
+  const m = msg();
+  const timeline = state.mode === 'timeline';
+  const head = [
+    m.macPrompter,
+    ...(state.slide != null ? [m.prompterSlide(state.slide)] : []),
+    `${(state.page ?? 0) + 1}/${state.pages}`,
+    ...(timeline ? [state.playing ? m.prompterPlaying : m.prompterPaused] : state.following ? [m.prompterFollowing] : []),
+  ].join(' · ');
+  const mark = state.following || (timeline && state.playing);
+  const rows: string[] = [];
+  (state.pageLines ?? []).forEach((text, i) => {
+    rows.push(...wrapLines(mark && i === state.pageLine ? `▷ ${text}` : text, MAC_COLS, 3));
+  });
+  const problem = error ?? (state.error ? m.prompterNoMic : undefined);
+  const room = MAC_ROWS - 2 - (problem ? 1 : 0);
+  const body = rows.slice(0, room);
+  // 다음 화면 첫 줄 미리 보기(한 줄 띄우고). 자리가 없으면 뺀다.
+  if (state.nextPageFirst && body.length + 2 <= room) body.push('', clip(`${m.prompterNext} ${state.nextPageFirst}`, MAC_COLS));
+  const hint = timeline
+    ? state.playing ? m.prompterHintPagePlaying : m.prompterHintPagePaused
+    : state.following ? m.prompterHintPageOn : m.prompterHintPageOff;
+  return page(head, problem ? [clip(problem, MAC_COLS), ...body] : body, hint);
 }
 
 /** 단축어 결과. state: running · done · still · failed */

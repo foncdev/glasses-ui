@@ -59,6 +59,7 @@ import {
   macItemLabel,
   meetingPage,
   presentPage,
+  prompterPage,
   reasonText,
   shortcutPage,
   type CaptionLine,
@@ -68,6 +69,7 @@ import {
   type MacItem,
   type MacShortcut,
   type PresentState,
+  type PrompterState,
 } from './mac.js';
 
 /**
@@ -100,6 +102,7 @@ type Screen =
   | 'mac-captions'
   | 'mac-meeting'
   | 'mac-shortcuts'
+  | 'mac-prompter'
   | 'mac-result';
 
 /** home에서 한 단계 아래로 내려갈 메뉴. 순서가 곧 커서 위치다. */
@@ -629,6 +632,7 @@ export class GlassesUI {
   /** undefined: 읽는 중. */
   private macShortcuts?: MacShortcut[];
   private macShortcutCursor = 0;
+  private macPrompter?: PrompterState;
   private macResult?: { name: string; state: string; output?: string };
   /** 결과 화면에서 돌아갈 곳. */
   private macResultBack: 'mac' | 'mac-shortcuts' = 'mac';
@@ -1521,9 +1525,9 @@ export class GlassesUI {
   private armIdle(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = undefined;
-    // 발표 중에는 끄지 않는다. 노트를 보며 말하는 동안 손을 대지 않으니
+    // 발표·원고 화면에서는 끄지 않는다. 보며 말하는 동안 손을 대지 않으니
     // 무조작으로 꺼지면 정작 필요할 때 화면이 없다.
-    if (this.screen === 'mac-present') return;
+    if (this.screen === 'mac-present' || this.screen === 'mac-prompter') return;
     this.idleTimer = setTimeout(() => void this.sleep(), this.idleMs);
     (this.idleTimer as { unref?: () => void }).unref?.();
   }
@@ -1774,6 +1778,10 @@ export class GlassesUI {
       }
       if (this.screen === 'mac-meeting') {
         await this.glasses.showText(meetingPage(this.macEvent, this.macError, Date.now()));
+        return;
+      }
+      if (this.screen === 'mac-prompter') {
+        await this.glasses.showText(prompterPage(this.macPrompter, this.macError));
         return;
       }
       if (this.screen === 'mac-shortcuts') {
@@ -2185,7 +2193,7 @@ export class GlassesUI {
 
     // 발표·자막 중에는 팝업으로 덮지 않는다. 노트와 자막이 가려지고, 팝업이 떠 있는
     // 동안은 위·아래(쪽 넘기기)도 먹힌다. 알림 목록에는 남는다.
-    if (this.screen === 'mac-present' || this.screen === 'mac-captions') return;
+    if (this.screen === 'mac-present' || this.screen === 'mac-captions' || this.screen === 'mac-prompter') return;
 
     // 할 일 화면에서 할 일이 바뀐 알림은 띄우지 않는다. 서버가 할 일
     // 변경마다 알림을 남기는데, 안경에서 체크하면 방금 한 일이 팝업으로
@@ -2457,6 +2465,7 @@ export class GlassesUI {
     if (item.screen === 'mac-present') return this.openPresent();
     if (item.screen === 'mac-captions') return this.openCaptions();
     if (item.screen === 'mac-meeting') return this.openMeeting();
+    if (item.screen === 'mac-prompter') return this.openPrompter();
     return this.openMacShortcuts();
   }
 
@@ -2562,6 +2571,44 @@ export class GlassesUI {
         this.macCaptionLines = [];
         this.macPartial = undefined;
       }
+      this.macError = undefined;
+    } catch (err) {
+      this.macError = errorText(err);
+    }
+    await this.render();
+  }
+
+  private async openPrompter(): Promise<void> {
+    this.screen = 'mac-prompter';
+    this.macPrompter = undefined;
+    this.armIdle(); // 원고 화면에서는 타이머를 걷는다.
+    await this.render();
+    const load = async (): Promise<void> => {
+      try {
+        this.macPrompter = await agentCli.mac<PrompterState>('/prompter/state');
+        this.macError = undefined;
+      } catch (err) {
+        this.macError = errorText(err);
+      }
+      if (this.screen === 'mac-prompter') await this.render();
+    };
+    await load();
+    this.macStop = agentCli.streamMac(
+      '/prompter/stream',
+      ['state', 'error'],
+      (type, data) => {
+        if (type === 'state') this.macPrompter = data as PrompterState;
+        else this.macError = errorText((data as { error?: unknown }).error);
+        void this.render();
+      },
+      () => this.pollMac(load),
+    );
+  }
+
+  /** 원고가 없으면 맥 클립보드에서 불러오고, 있으면 말 따라가기를 켜고 끈다. */
+  private async prompterCommand(path: string, body: unknown = {}): Promise<void> {
+    try {
+      this.macPrompter = await agentCli.mac<PrompterState>(path, body);
       this.macError = undefined;
     } catch (err) {
       this.macError = errorText(err);
@@ -2920,6 +2967,18 @@ export class GlassesUI {
     if (this.screen === 'mac-captions') {
       if (gesture === 'doubleTap') return this.backToMac();
       if (gesture === 'tap') return this.toggleCaptions();
+      return;
+    }
+
+    // 텔레프롬프터: 탭은 불러오기(원고 없을 때) 또는 말 따라가기, 위·아래는 이전·다음 줄.
+    if (this.screen === 'mac-prompter') {
+      if (gesture === 'doubleTap') return this.backToMac();
+      if (gesture === 'up') return this.prompterCommand('/prompter/prev');
+      if (gesture === 'down') return this.prompterCommand('/prompter/next');
+      if (gesture === 'tap') {
+        if (!this.macPrompter?.hasScript) return this.prompterCommand('/prompter/load-clipboard');
+        return this.prompterCommand('/prompter/follow', { on: !this.macPrompter.following });
+      }
       return;
     }
 

@@ -27,6 +27,8 @@ import {
   wrapLines,
   type CaptionLine,
   type PresentState,
+  prompterPage,
+  type PrompterState,
 } from '../src/core/mac.js';
 
 const NOW = Date.parse('2026-10-04T10:00:00+09:00');
@@ -133,7 +135,7 @@ test('메뉴: 못 쓰는 기능엔 사유가 붙고, 글은 목록 칸(63바이�
     { id: 'calendar', ready: false, reason: 'license_required' },
   ];
   assert.deepEqual(MAC_ITEMS.map((i) => macItemLabel(i, caps)), [
-    '발표 리모컨', '회의 자막 · 화면 기록 권한 필요', '다음 회의 · 라이선스 필요', '단축어 · 쓸 수 없음',
+    '발표 리모컨', '회의 자막 · 화면 기록 권한 필요', '다음 회의 · 라이선스 필요', '단축어 · 쓸 수 없음', '텔레프롬프터 · 쓸 수 없음',
   ]);
   for (const locale of ['ko', 'en'] as const) {
     setLocale(locale);
@@ -176,6 +178,7 @@ interface Harness {
 
 async function harness(responses: Record<string, unknown>, caps = [
   { id: 'present', ready: true }, { id: 'captions', ready: true }, { id: 'calendar', ready: true }, { id: 'shortcuts', ready: true },
+  { id: 'prompter', ready: true },
 ]): Promise<Harness & { restore(): void }> {
   const lists: Harness['lists'] = [];
   const texts: string[] = [];
@@ -243,7 +246,7 @@ test('맥 메뉴 → 발표: 탭·아래는 다음, 위는 이전. 이벤트로 
   });
   try {
     await h.r.openMenu('mac');
-    assert.deepEqual(h.lists.at(-1)!.items, ['발표 리모컨', '회의 자막', '다음 회의', '단축어']);
+    assert.deepEqual(h.lists.at(-1)!.items, ['발표 리모컨', '회의 자막', '다음 회의', '단축어', '텔레프롬프터']);
 
     await h.fire('tap', 0);
     assert.equal(h.r.screen, 'mac-present');
@@ -403,6 +406,69 @@ test('맥이 붙어 있지 않으면 그렇게 알리고 탭해도 아무 일 �
     assert.equal(h.r.screen, 'mac');
     await h.fire('doubleTap');
     assert.equal(h.r.screen, 'home');
+  } finally {
+    h.restore();
+  }
+});
+
+const script = (line: number, following = false): PrompterState => ({
+  hasScript: true, following, line, total: 30, start: Math.max(0, line - 1),
+  lines: Array.from({ length: 9 }, (_, i) => `${Math.max(0, line - 1) + i + 1}번째 줄은 이렇게 꽤 길게 이어지는 원고 문장입니다`),
+});
+
+test('텔레프롬프터: 지금 줄에 ▷, 앞 줄 하나, 10줄·화면 폭 안', () => {
+  for (const locale of ['ko', 'en'] as const) {
+    setLocale(locale);
+    try {
+      fitsScreen(prompterPage(script(5, true), undefined));
+      fitsScreen(prompterPage(script(0), '마이크 권한이 필요합니다 '.repeat(5)));
+      fitsScreen(prompterPage({ hasScript: false, following: false, line: 0, total: 0, start: 0, lines: [] }, undefined));
+    } finally {
+      setLocale('ko');
+    }
+  }
+  const rows = prompterPage(script(5, true), undefined).split('\n');
+  assert.equal(rows[0], '텔레프롬프터 · 6/30 · 말 따라가는 중');
+  assert.ok(rows[1].startsWith('5번째'), '앞 줄 하나');
+  assert.ok(rows.some((r) => r.startsWith('▷ 6번째')), '지금 줄 표시');
+  assert.equal(rows.at(-1), msg().prompterHintOn);
+});
+
+test('텔레프롬프터: 원고가 없으면 탭으로 맥 클립보드를 불러오고, 있으면 탭으로 따라가기를 켠다. 꺼지지 않는다', async () => {
+  let state: PrompterState = { hasScript: false, following: false, line: 0, total: 0, start: 0, lines: [] };
+  const h = await harness({
+    '/prompter/state': () => state,
+    '/prompter/load-clipboard': () => (state = script(0)),
+    '/prompter/follow': () => (state = { ...state, following: true }),
+    '/prompter/next': () => (state = script(state.line + 1, state.following)),
+    '/prompter/prev': () => (state = script(Math.max(0, state.line - 1), state.following)),
+  });
+  try {
+    await h.r.openMenu('mac');
+    await h.fire('tap', 4);
+    assert.equal(h.r.screen, 'mac-prompter');
+    assert.equal(h.r.idleTimer, undefined, '원고 화면에서는 꺼지지 않는다');
+    assert.match(h.texts.at(-1)!, /맥에서 원고를 복사한 뒤 탭하세요/);
+
+    await h.fire('tap');
+    assert.equal(h.calls.at(-1)!.path, '/prompter/load-clipboard');
+    await h.fire('tap');
+    assert.deepEqual(h.calls.at(-1), { path: '/prompter/follow', body: { on: true } });
+    assert.match(h.texts.at(-1)!, /말 따라가는 중/);
+
+    await h.fire('down');
+    await h.fire('down');
+    await h.fire('up');
+    assert.match(h.texts.at(-1)!, /· 2\/30 ·/);
+
+    // 맥에서 말을 따라 넘어가면 스트림으로 온다.
+    h.streams.at(-1)!.push('state', script(12, true));
+    await new Promise((res) => setTimeout(res, 20));
+    assert.match(h.texts.at(-1)!, /▷ 13번째/);
+
+    await h.fire('doubleTap');
+    assert.equal(h.r.screen, 'mac');
+    assert.equal(h.streams.at(-1)!.closed, true);
   } finally {
     h.restore();
   }

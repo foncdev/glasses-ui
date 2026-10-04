@@ -63,6 +63,17 @@ export interface MacEvent {
   meetingURL?: string;
 }
 
+/** 텔레프롬프터 상태. lines[0]이 start번 줄이다. */
+export interface PrompterState {
+  hasScript: boolean;
+  following: boolean;
+  line: number;
+  total: number;
+  start: number;
+  lines: string[];
+  error?: string;
+}
+
 export interface MacShortcut {
   id: string;
   name: string;
@@ -74,6 +85,7 @@ export const MAC_ITEMS = [
   { label: 'macCaptions', capability: 'captions', screen: 'mac-captions' },
   { label: 'macMeeting', capability: 'calendar', screen: 'mac-meeting' },
   { label: 'macShortcuts', capability: 'shortcuts', screen: 'mac-shortcuts' },
+  { label: 'macPrompter', capability: 'prompter', screen: 'mac-prompter' },
 ] as const;
 
 export type MacItem = (typeof MAC_ITEMS)[number];
@@ -257,6 +269,31 @@ export function meetingPage(event: MacEvent | null | undefined, error: string | 
   if (event.location) body.push(...wrapLines(event.location, MAC_COLS, 2));
   if (event.meetingURL) body.push(m.meetingLink);
   return page(m.macMeeting, body, m.meetingHint);
+}
+
+/**
+ * 텔레프롬프터. 지금 줄에 ▷를 붙이고 그 뒤 줄을 이어 보인다. 앞 줄은 하나만 남긴다 —
+ * 방금 읽은 끝을 놓쳤을 때 눈을 돌릴 자리다.
+ */
+export function prompterPage(state: PrompterState | undefined, error: string | undefined): string {
+  const m = msg();
+  if (!state) return page(m.macPrompter, [error ?? m.reading], m.hintBack);
+  if (!state.hasScript) {
+    return page(m.macPrompter, [...(error ? [clip(error, MAC_COLS)] : []), m.prompterEmpty], m.prompterLoadHint);
+  }
+  const head = `${m.macPrompter} · ${state.line + 1}/${state.total} · ${state.following ? m.prompterFollowing : m.prompterManual}`;
+  const room = MAC_ROWS - 2 - (error ? 1 : 0);
+  const rows: string[] = [];
+  state.lines.forEach((text, i) => {
+    const index = state.start + i;
+    if (index < state.line - 1) return;
+    // 지금 줄은 ▷로 표시한다. 펌웨어 글꼴에 있는 글자다. 다른 줄을 들여 써 맞추지 않는다 —
+    // 펌웨어가 줄 앞 공백을 지운다.
+    rows.push(...wrapLines(index === state.line ? `▷ ${text}` : text, MAC_COLS, 2));
+  });
+  const problem = error ?? (state.error ? m.prompterNoMic : undefined);
+  const body = problem ? [clip(problem, MAC_COLS), ...rows.slice(0, room)] : rows.slice(0, room);
+  return page(head, body, state.following ? m.prompterHintOn : m.prompterHintOff);
 }
 
 /** 단축어 결과. state: running · done · still · failed */

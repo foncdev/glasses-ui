@@ -171,7 +171,7 @@ test('영어로 두면 홈 메뉴·요약이 영어로 그려진다', async () =
       const v = sink.home.at(-1)!;
       assert.deepEqual(
         v.items.map((i) => i.label),
-        ['Agents', 'Notifications', 'To-Dos', 'System', 'Commands', 'Timer · Water', 'Settings'],
+        ['Agents', 'Notifications', 'To-Dos', 'System', 'Commands', 'Mac', 'Timer · Water', 'Settings'],
       );
       const meta = Object.fromEntries(v.items.map((i) => [i.label, i.meta]));
       assert.equal(meta.Notifications, '7 new');
@@ -290,7 +290,7 @@ async function eachLocale(fn: (locale: Locale) => void): Promise<void> {
 test('홈 메뉴: 라벨과 가장 긴 오른쪽 값이 한 칸에 잘리지 않고 들어간다', async () => {
   await eachLocale((l) => {
     const m = msg();
-    const labels = [m.menuAgents, m.menuNotifications, m.menuChecklist, m.menuSystem, m.menuCommands, m.menuPhone, m.menuSettings];
+    const labels = [m.menuAgents, m.menuNotifications, m.menuChecklist, m.menuSystem, m.menuCommands, m.menuMac, m.menuPhone, m.menuSettings];
     const view: HomeView = {
       title: '$ relay ~/home',
       status: '',
@@ -562,7 +562,7 @@ test('영어 글은 같은 자리의 한국어보다 크게 넓지 않다 (홈 �
   // 홈 메뉴 칸은 오른쪽 값과 함께 238px이다. 라벨은 그 절반을 넘지 않게 둔다.
   await eachLocale((l) => {
     const m = msg();
-    for (const label of [m.menuAgents, m.menuNotifications, m.menuChecklist, m.menuSystem, m.menuCommands, m.menuPhone, m.menuSettings]) {
+    for (const label of [m.menuAgents, m.menuNotifications, m.menuChecklist, m.menuSystem, m.menuCommands, m.menuMac, m.menuPhone, m.menuSettings]) {
       assert.ok(getTextWidth(label) <= 140, `[${l}] 메뉴 라벨이 길다 (${getTextWidth(label)}px): ${label}`);
     }
   });

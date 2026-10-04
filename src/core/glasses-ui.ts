@@ -52,6 +52,23 @@ import {
   type PhoneStatus,
 } from './phone.js';
 import { msg } from './i18n.js';
+import {
+  MAC_ITEMS,
+  captionsPage,
+  errorText,
+  macItemLabel,
+  meetingPage,
+  presentPage,
+  reasonText,
+  shortcutPage,
+  type CaptionLine,
+  type CaptionsState,
+  type ExtCapability,
+  type MacEvent,
+  type MacItem,
+  type MacShortcut,
+  type PresentState,
+} from './mac.js';
 
 /**
  * 화면 구성.
@@ -77,7 +94,13 @@ type Screen =
   | 'command-result'
   | 'phone'
   | 'home-menu'
-  | 'settings';
+  | 'settings'
+  | 'mac'
+  | 'mac-present'
+  | 'mac-captions'
+  | 'mac-meeting'
+  | 'mac-shortcuts'
+  | 'mac-result';
 
 /** home에서 한 단계 아래로 내려갈 메뉴. 순서가 곧 커서 위치다. */
 /** 상태 표시줄 시각. HH:MM. */
@@ -160,6 +183,7 @@ const MENU = [
   { label: 'menuChecklist', screen: 'checklist' as const },
   { label: 'menuSystem', screen: 'system' as const },
   { label: 'menuCommands', screen: 'commands' as const },
+  { label: 'menuMac', screen: 'mac' as const },
   { label: 'menuPhone', screen: 'phone' as const },
   { label: 'menuSettings', screen: 'settings' as const },
 ] as const;
@@ -584,6 +608,30 @@ export class GlassesUI {
   /** 등록해 둔 명령. 안경에서는 골라 실행만 한다. */
   private snippets: Snippet[] = [];
   private cmdCursor = 0;
+
+  // --- 맥(mac-agent) ---
+  /** 기능 목록. undefined: 읽는 중, null: 맥이 붙어 있지 않음. */
+  private macCaps: ExtCapability[] | null | undefined;
+  private macCursor = 0;
+  /** 지금 화면의 SSE를 끊는다. 화면을 떠날 때 꼭 부른다. */
+  private macStop?: () => void;
+  /** SSE가 막혔을 때 대신 읽는 타이머. */
+  private macPoll?: ReturnType<typeof setInterval>;
+  /** 발표 경과 시간을 고쳐 그리는 타이머. */
+  private macTick?: ReturnType<typeof setInterval>;
+  private macError?: string;
+  private macPresent?: PresentState;
+  private macCaptionLines: CaptionLine[] = [];
+  private macPartial?: CaptionLine;
+  private macCaptionsState?: CaptionsState;
+  /** undefined: 읽는 중, null: 일정 없음. */
+  private macEvent?: MacEvent | null;
+  /** undefined: 읽는 중. */
+  private macShortcuts?: MacShortcut[];
+  private macShortcutCursor = 0;
+  private macResult?: { name: string; state: string; output?: string };
+  /** 결과 화면에서 돌아갈 곳. */
+  private macResultBack: 'mac' | 'mac-shortcuts' = 'mac';
   /**
    * 마지막 실행 결과. 결과 화면에서 보여준다.
    *
@@ -1472,6 +1520,10 @@ export class GlassesUI {
    */
   private armIdle(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = undefined;
+    // 발표 중에는 끄지 않는다. 노트를 보며 말하는 동안 손을 대지 않으니
+    // 무조작으로 꺼지면 정작 필요할 때 화면이 없다.
+    if (this.screen === 'mac-present') return;
     this.idleTimer = setTimeout(() => void this.sleep(), this.idleMs);
     (this.idleTimer as { unref?: () => void }).unref?.();
   }
@@ -1696,6 +1748,48 @@ export class GlassesUI {
           msg().withBack(phoneHeader(this.phone, this.phoneAt, Date.now())),
           phoneActions(this.phone).map((a) => a.label),
         );
+        return;
+      }
+
+      // 맥(mac-agent). 글이 많은 화면은 텍스트 한 장으로 그린다 —
+      // 같은 모드면 기기가 깜빡임 없이 글자만 바꾼다(자막·쪽 넘김).
+      if (this.screen === 'mac') {
+        const m = msg();
+        const rows =
+          this.macCaps === undefined
+            ? [m.reading]
+            : this.macCaps === null
+              ? [m.macNotConnected]
+              : MAC_ITEMS.map((i) => macItemLabel(i, this.macCaps as ExtCapability[]));
+        await this.glasses.showList(m.withBack(m.menuMac), rows);
+        return;
+      }
+      if (this.screen === 'mac-present') {
+        await this.glasses.showText(presentPage(this.macPresent, this.macError, Date.now()));
+        return;
+      }
+      if (this.screen === 'mac-captions') {
+        await this.glasses.showText(captionsPage(this.macCaptionLines, this.macPartial, this.macCaptionsState, this.macError));
+        return;
+      }
+      if (this.screen === 'mac-meeting') {
+        await this.glasses.showText(meetingPage(this.macEvent, this.macError, Date.now()));
+        return;
+      }
+      if (this.screen === 'mac-shortcuts') {
+        const m = msg();
+        const rows =
+          this.macShortcuts === undefined
+            ? [m.reading]
+            : this.macShortcuts.length > 0
+              ? this.macShortcuts.map((s) => s.name)
+              : [this.macError ?? m.shortcutsEmpty];
+        await this.glasses.showList(m.withBack(m.macShortcuts), rows);
+        return;
+      }
+      if (this.screen === 'mac-result') {
+        const r = this.macResult;
+        await this.glasses.showText(shortcutPage(r?.name ?? '', r?.state ?? 'failed', r?.output));
         return;
       }
 
@@ -1982,7 +2076,9 @@ export class GlassesUI {
       | 'checkCursor'
       | 'cmdCursor'
       | 'phoneCursor'
-      | 'homeMenuCursor',
+      | 'homeMenuCursor'
+      | 'macCursor'
+      | 'macShortcutCursor',
     count: number,
   ): boolean {
     const last = Math.max(count - 1, 0);
@@ -2006,6 +2102,7 @@ export class GlassesUI {
   private async goHome(): Promise<void> {
     this.detailStop?.();
     this.detailStop = undefined;
+    this.stopMacStream();
     this.setSpinning(false);
     this.screen = 'home';
     this.activeId = '';
@@ -2085,6 +2182,10 @@ export class GlassesUI {
 
     // 알림 화면을 보고 있으면 목록으로 이미 보인다.
     if (this.screen === 'notifications') return;
+
+    // 발표·자막 중에는 팝업으로 덮지 않는다. 노트와 자막이 가려지고, 팝업이 떠 있는
+    // 동안은 위·아래(쪽 넘기기)도 먹힌다. 알림 목록에는 남는다.
+    if (this.screen === 'mac-present' || this.screen === 'mac-captions') return;
 
     // 할 일 화면에서 할 일이 바뀐 알림은 띄우지 않는다. 서버가 할 일
     // 변경마다 알림을 남기는데, 안경에서 체크하면 방금 한 일이 팝업으로
@@ -2291,7 +2392,230 @@ export class GlassesUI {
       this.screen = 'settings';
       this.setCursor = 0;
       await this.render();
+      return;
     }
+    if (target === 'mac') {
+      this.screen = 'mac';
+      this.macCursor = 0;
+      this.macCaps = undefined;
+      await this.render();
+      await this.refreshMacCaps();
+    }
+  }
+
+  // --- 맥(mac-agent) ---
+
+  /** 맥이 붙어 있는지와 기능 목록을 읽는다. 권한을 켜고 돌아왔을 수 있어 들어올 때마다 읽는다. */
+  private async refreshMacCaps(): Promise<void> {
+    try {
+      const agents = await agentCli.listExt();
+      this.macCaps = agents.find((a) => a.agent === 'mac-agent')?.capabilities ?? null;
+    } catch (err) {
+      this.macCaps = null;
+      this.log(errorText(err), 'warn');
+    }
+    if (this.screen === 'mac') await this.render();
+  }
+
+  private stopMacStream(): void {
+    this.macStop?.();
+    this.macStop = undefined;
+    clearInterval(this.macPoll);
+    this.macPoll = undefined;
+    clearInterval(this.macTick);
+    this.macTick = undefined;
+  }
+
+  /** SSE가 막히면 이걸로 대신 읽는다. 한 번만 건다. */
+  private pollMac(load: () => Promise<void>): void {
+    if (this.macPoll) return;
+    this.macPoll = setInterval(() => void load(), 2000);
+    (this.macPoll as { unref?: () => void }).unref?.();
+  }
+
+  /** 맥 메뉴로 돌아온다. 발표 화면에서 나오면 꺼짐 타이머를 다시 건다. */
+  private async backToMac(): Promise<void> {
+    this.stopMacStream();
+    this.macError = undefined;
+    this.screen = 'mac';
+    this.armIdle();
+    await this.render();
+    await this.refreshMacCaps();
+  }
+
+  private async openMacItem(item: MacItem): Promise<void> {
+    const cap = this.macCaps?.find((c) => c.id === item.capability);
+    if (!cap?.ready) {
+      // 못 쓰는 까닭과 고칠 곳을 보여 준다. 고치는 일은 맥에서 한다.
+      this.macResult = { name: msg()[item.label], state: 'failed', output: `${reasonText(cap?.reason)}\n${msg().macFixOnMac}` };
+      this.macResultBack = 'mac';
+      this.screen = 'mac-result';
+      await this.render();
+      return;
+    }
+    this.macError = undefined;
+    if (item.screen === 'mac-present') return this.openPresent();
+    if (item.screen === 'mac-captions') return this.openCaptions();
+    if (item.screen === 'mac-meeting') return this.openMeeting();
+    return this.openMacShortcuts();
+  }
+
+  private async openPresent(): Promise<void> {
+    this.screen = 'mac-present';
+    this.macPresent = undefined;
+    this.armIdle(); // 발표 화면에서는 타이머를 걷는다.
+    await this.render();
+    const load = async (): Promise<void> => {
+      try {
+        this.macPresent = await agentCli.mac<PresentState>('/present/state');
+        this.macError = undefined;
+      } catch (err) {
+        this.macError = errorText(err);
+      }
+      if (this.screen === 'mac-present') await this.render();
+    };
+    await load();
+    this.macStop = agentCli.streamMac(
+      '/present/stream',
+      ['state', 'error'],
+      (type, data) => {
+        if (type === 'state') {
+          this.macPresent = data as PresentState;
+          this.macError = undefined;
+        } else {
+          this.macError = errorText((data as { error?: unknown }).error);
+        }
+        void this.render();
+      },
+      () => this.pollMac(load),
+    );
+    // 경과 분을 고쳐 그린다. 분 단위라 자주 그릴 필요는 없다.
+    this.macTick = setInterval(() => {
+      if (this.macPresent?.status === 'playing') void this.render();
+    }, 15_000);
+    (this.macTick as { unref?: () => void }).unref?.();
+  }
+
+  private async presentCommand(command: 'next' | 'prev' | 'start'): Promise<void> {
+    try {
+      this.macPresent = await agentCli.mac<PresentState>(`/present/${command}`, {});
+      this.macError = undefined;
+    } catch (err) {
+      this.macError = errorText(err);
+    }
+    await this.render();
+  }
+
+  private async openCaptions(): Promise<void> {
+    this.screen = 'mac-captions';
+    this.macCaptionLines = [];
+    this.macPartial = undefined;
+    this.macCaptionsState = undefined;
+    await this.render();
+    const load = async (): Promise<void> => {
+      try {
+        this.macCaptionsState = await agentCli.mac<CaptionsState>('/captions/state');
+        const { lines } = await agentCli.mac<{ lines: CaptionLine[] }>('/captions/transcript');
+        this.macCaptionLines = lines.slice(-6);
+        this.macError = undefined;
+      } catch (err) {
+        this.macError = errorText(err);
+      }
+      if (this.screen === 'mac-captions') await this.render();
+    };
+    await load();
+    this.macStop = agentCli.streamMac(
+      '/captions/stream',
+      ['caption', 'state', 'error'],
+      (type, data) => this.onCaption(type, data),
+      () => this.pollMac(load),
+    );
+  }
+
+  /** 자막 이벤트. 같은 id가 말하는 동안 고쳐지다가 final로 굳는다. */
+  private onCaption(type: string, data: unknown): void {
+    if (type === 'state') {
+      this.macCaptionsState = data as CaptionsState;
+    } else if (type === 'caption') {
+      const line = data as CaptionLine;
+      if (!line.final) {
+        this.macPartial = line;
+      } else {
+        if (this.macPartial?.id === line.id) this.macPartial = undefined;
+        // 빈 채로 굳은 줄은 지우라는 뜻이다.
+        const rest = this.macCaptionLines.filter((l) => l.id !== line.id);
+        this.macCaptionLines = line.text ? [...rest, line].slice(-6) : rest;
+      }
+      // 말이 들리면 화면을 켠다. 조용하면 평소처럼 꺼진다.
+      this.wake();
+    } else {
+      this.macError = errorText((data as { error?: unknown }).error);
+    }
+    void this.render();
+  }
+
+  private async toggleCaptions(): Promise<void> {
+    const running = this.macCaptionsState?.running ?? false;
+    try {
+      this.macCaptionsState = await agentCli.mac<CaptionsState>(running ? '/captions/stop' : '/captions/start', {});
+      if (!running) {
+        this.macCaptionLines = [];
+        this.macPartial = undefined;
+      }
+      this.macError = undefined;
+    } catch (err) {
+      this.macError = errorText(err);
+    }
+    await this.render();
+  }
+
+  private async openMeeting(): Promise<void> {
+    this.screen = 'mac-meeting';
+    this.macEvent = undefined;
+    await this.render();
+    await this.loadMeeting();
+  }
+
+  private async loadMeeting(): Promise<void> {
+    try {
+      const { event } = await agentCli.mac<{ event: MacEvent | null }>('/calendar/next');
+      this.macEvent = event ?? null;
+      this.macError = undefined;
+    } catch (err) {
+      this.macError = errorText(err);
+    }
+    await this.render();
+  }
+
+  private async openMacShortcuts(): Promise<void> {
+    this.screen = 'mac-shortcuts';
+    this.macShortcutCursor = 0;
+    this.macShortcuts = undefined;
+    await this.render();
+    try {
+      const r = await agentCli.mac<{ shortcuts: MacShortcut[]; reason?: string }>('/shortcuts');
+      this.macShortcuts = r.shortcuts.slice(0, LIST_MAX);
+      this.macError = r.reason ? reasonText(r.reason) : undefined;
+    } catch (err) {
+      this.macShortcuts = [];
+      this.macError = errorText(err);
+    }
+    await this.render();
+  }
+
+  private async runMacShortcut(s: MacShortcut): Promise<void> {
+    this.macResult = { name: s.name, state: 'running' };
+    this.macResultBack = 'mac-shortcuts';
+    this.screen = 'mac-result';
+    await this.render();
+    try {
+      const r = await agentCli.mac<{ status: string; output?: string }>('/shortcuts/run', { id: s.id }, 35_000);
+      this.macResult = { name: s.name, state: r.status === 'done' ? 'done' : 'still', output: r.output };
+    } catch (err) {
+      this.macResult = { name: s.name, state: 'failed', output: errorText(err) };
+    }
+    this.wake();
+    await this.render();
   }
 
   /** 세션 하나의 대화 기록을 연다. */
@@ -2568,6 +2892,71 @@ export class GlassesUI {
       return;
     }
 
+    // 맥 메뉴: 발표·자막·다음 회의·단축어.
+    if (this.screen === 'mac') {
+      if (gesture === 'doubleTap') return this.goHome();
+      if (!this.macCaps) return;
+      if (this.moveCursor(gesture, selectedIndex, 'macCursor', MAC_ITEMS.length)) {
+        await this.render();
+        return;
+      }
+      if (gesture === 'tap') {
+        const item = MAC_ITEMS[this.macCursor];
+        if (item) await this.openMacItem(item);
+      }
+      return;
+    }
+
+    // 발표: 탭은 다음 쪽(발표 전이면 시작), 위·아래는 이전·다음 쪽.
+    if (this.screen === 'mac-present') {
+      if (gesture === 'doubleTap') return this.backToMac();
+      if (gesture === 'up') return this.presentCommand('prev');
+      if (gesture === 'down') return this.presentCommand('next');
+      if (gesture === 'tap') return this.presentCommand(this.macPresent?.status === 'playing' ? 'next' : 'start');
+      return;
+    }
+
+    // 자막: 탭으로 켜고 끈다.
+    if (this.screen === 'mac-captions') {
+      if (gesture === 'doubleTap') return this.backToMac();
+      if (gesture === 'tap') return this.toggleCaptions();
+      return;
+    }
+
+    // 다음 회의: 탭하면 다시 읽는다.
+    if (this.screen === 'mac-meeting') {
+      if (gesture === 'doubleTap') return this.backToMac();
+      if (gesture === 'tap') return this.loadMeeting();
+      return;
+    }
+
+    // 단축어: 탭하면 맥에서 돌린다.
+    if (this.screen === 'mac-shortcuts') {
+      if (gesture === 'doubleTap') return this.backToMac();
+      const list = this.macShortcuts ?? [];
+      if (this.moveCursor(gesture, selectedIndex, 'macShortcutCursor', list.length)) {
+        await this.render();
+        return;
+      }
+      if (gesture === 'tap') {
+        const s = list[this.macShortcutCursor];
+        if (s) await this.runMacShortcut(s);
+      }
+      return;
+    }
+
+    // 결과: 아무 탭이나 돌아간다. 도는 중에는 기다린다.
+    if (this.screen === 'mac-result') {
+      if (this.macResult?.state === 'running') return;
+      if (gesture !== 'tap' && gesture !== 'doubleTap') return;
+      if (this.macResultBack === 'mac-shortcuts') {
+        this.screen = 'mac-shortcuts';
+        await this.render();
+        return;
+      }
+      return this.backToMac();
+    }
+
     // 설정: 음성 토글 + 로고 토글 + 화면 꺼짐 시간 세 칸.
     if (this.screen === 'settings') {
       if (gesture === 'doubleTap') return this.goHome();
@@ -2830,6 +3219,7 @@ export class GlassesUI {
     this.stopped = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.detailStop?.();
+    this.stopMacStream();
     this.eventStop?.();
     this.lifecycleStop?.();
     clearInterval(this.pollTimer);

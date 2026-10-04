@@ -9,6 +9,8 @@
 import type { PhoneStatus, PhoneTimerAction } from './phone.js';
 import { msg } from './i18n.js';
 
+import type { ExtAgent } from './mac.js';
+
 export interface SessionInfo {
   id: string;
   workspaceId: string;
@@ -114,8 +116,12 @@ export interface AuthStatus {
 const REQUEST_TIMEOUT_MS = 15_000;
 
 export class AgentCliError extends Error {
-  /** HTTP 상태. 401이면 로그인이 풀린 것이다. 접속 실패처럼 응답이 없으면 없다. */
-  constructor(message: string, readonly status?: number) {
+  /**
+   * HTTP 상태. 401이면 로그인이 풀린 것이다. 접속 실패처럼 응답이 없으면 없다.
+   * code는 서버가 준 오류 코드(no_agent, license_required 등). 문구는 언어마다
+   * 달라지므로 화면이 갈래를 나눌 때는 이걸 본다.
+   */
+  constructor(message: string, readonly status?: number, readonly code?: string) {
     super(message);
   }
 }
@@ -232,7 +238,7 @@ export class AgentCliClient {
     }
 
     if (!res.ok) {
-      const err = (body as { error?: { message?: string } }).error;
+      const err = (body as { error?: { message?: string; code?: string } }).error;
       // 401이면 서버 문구를 먼저 쓴다. 로그인 실패면 '아이디 또는 비밀번호가
       // 올바르지 않습니다'가 온다. 예전에는 늘 'API 키가 맞지 않습니다'라
       // 계정으로 로그인하는데 키를 물어보는 것처럼 보였다.
@@ -243,9 +249,69 @@ export class AgentCliClient {
         }
         throw new AgentCliError(err?.message ?? msg().errLoggedOut, 401);
       }
-      throw new AgentCliError(err?.message ?? msg().errRequest(res.status), res.status);
+      throw new AgentCliError(err?.message ?? msg().errRequest(res.status), res.status, err?.code);
     }
     return body as T;
+  }
+
+  // --- 확장 에이전트(mac-agent) ---
+  //
+  // relay-service의 /ext 통로로 붙은 에이전트. 서버는 이름으로 나눠 넘기기만 한다.
+
+  /** 붙어 있는 확장 에이전트와 각자의 기능 목록. */
+  async listExt(): Promise<ExtAgent[]> {
+    const { agents } = await this.request<{ agents: ExtAgent[] }>('/ext');
+    return agents ?? [];
+  }
+
+  /**
+   * mac-agent의 경로를 부른다. path는 /present/state처럼 에이전트 쪽 경로다.
+   * 본문을 주면 POST. 단축어처럼 오래 걸리는 것은 timeoutMs를 늘린다
+   * (relay는 30초에 끊고, mac-agent는 25초가 넘으면 '도는 중'으로 먼저 답한다).
+   */
+  mac<T>(path: string, body?: unknown, timeoutMs?: number): Promise<T> {
+    return this.request<T>(`/ext/mac-agent${path}`, {
+      ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+    });
+  }
+
+  /**
+   * mac-agent의 SSE를 받는다. 이름 붙은 이벤트(state·caption)를 그대로 넘긴다.
+   * 열리기 전에 끊기면 onError로 알린다 — 부른 쪽은 폴링으로 물러선다.
+   */
+  streamMac(
+    path: string,
+    types: string[],
+    onEvent: (type: string, data: unknown) => void,
+    onError?: (message: string) => void,
+  ): () => void {
+    const url = `${this.baseUrl}/ext/mac-agent${path}${
+      this.apiKey ? `?token=${encodeURIComponent(this.apiKey)}` : ''
+    }`;
+    try {
+      const es = new EventSource(url);
+      let opened = false;
+      es.onopen = () => {
+        opened = true;
+      };
+      for (const type of types) {
+        es.addEventListener(type, (e) => {
+          try {
+            onEvent(type, JSON.parse((e as MessageEvent).data));
+          } catch {
+            // 깨진 프레임은 버린다.
+          }
+        });
+      }
+      es.onerror = () => {
+        if (!opened) onError?.(msg().errStream);
+      };
+      return () => es.close();
+    } catch {
+      onError?.(msg().errStreamUnsupported);
+      return () => undefined;
+    }
   }
 
   /** 서버가 설정됐는지 본다. 인증 없이 호출할 수 있다. */

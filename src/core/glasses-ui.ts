@@ -58,6 +58,8 @@ import {
   errorText,
   macItemLabel,
   meetingPage,
+  messageSender,
+  quickReplies,
   presentPage,
   prompterPage,
   reasonText,
@@ -103,6 +105,7 @@ type Screen =
   | 'mac-meeting'
   | 'mac-shortcuts'
   | 'mac-prompter'
+  | 'mac-reply'
   | 'mac-result';
 
 /** home에서 한 단계 아래로 내려갈 메뉴. 순서가 곧 커서 위치다. */
@@ -635,7 +638,10 @@ export class GlassesUI {
   private macPrompter?: PrompterState;
   private macResult?: { name: string; state: string; output?: string };
   /** 결과 화면에서 돌아갈 곳. */
-  private macResultBack: 'mac' | 'mac-shortcuts' = 'mac';
+  private macResultBack: 'mac' | 'mac-shortcuts' | 'notifications' = 'mac';
+  /** 답장할 상대(메시지 알림의 보낸 사람). */
+  private macReplyTo?: string;
+  private macReplyCursor = 0;
   /**
    * 마지막 실행 결과. 결과 화면에서 보여준다.
    *
@@ -1198,7 +1204,8 @@ export class GlassesUI {
       label: this.kindLabel(kind),
       heading: n?.title ?? m.kindNotification,
       body: n?.body?.trim() || m.noContent,
-      hint: m.hintCloseBack,
+      // 메시지 알림이면 탭으로 답장한다(맥의 mac-agent가 보낸다).
+      hint: messageSender(n?.title) ? m.hintReplyBack : m.hintCloseBack,
     };
   }
 
@@ -1795,6 +1802,11 @@ export class GlassesUI {
         await this.glasses.showList(m.withBack(m.macShortcuts), rows);
         return;
       }
+      if (this.screen === 'mac-reply') {
+        const m = msg();
+        await this.glasses.showList(m.withBack(m.replyTo(this.macReplyTo ?? '')), [...quickReplies(), m.replyCancel]);
+        return;
+      }
       if (this.screen === 'mac-result') {
         const r = this.macResult;
         await this.glasses.showText(shortcutPage(r?.name ?? '', r?.state ?? 'failed', r?.output));
@@ -2086,7 +2098,8 @@ export class GlassesUI {
       | 'phoneCursor'
       | 'homeMenuCursor'
       | 'macCursor'
-      | 'macShortcutCursor',
+      | 'macShortcutCursor'
+      | 'macReplyCursor',
     count: number,
   ): boolean {
     const last = Math.max(count - 1, 0);
@@ -2616,6 +2629,21 @@ export class GlassesUI {
     await this.render();
   }
 
+  /** 메시지 답장을 맥에서 보낸다. 결과를 보이고 알림 목록으로 돌아간다. */
+  private async sendReply(to: string, text: string): Promise<void> {
+    this.macResult = { name: msg().replyTo(to), state: 'running' };
+    this.macResultBack = 'notifications';
+    this.screen = 'mac-result';
+    await this.render();
+    try {
+      await agentCli.mac('/messages/reply', { to, text });
+      this.macResult = { name: msg().replyTo(to), state: 'done', output: text };
+    } catch (err) {
+      this.macResult = { name: msg().replyTo(to), state: 'failed', output: errorText(err) };
+    }
+    await this.render();
+  }
+
   private async openMeeting(): Promise<void> {
     this.screen = 'mac-meeting';
     this.macEvent = undefined;
@@ -2842,6 +2870,14 @@ export class GlassesUI {
 
     // 알림 하나를 펼친 화면.
     if (this.screen === 'notification') {
+      const sender = messageSender(this.openNotif?.title);
+      if (gesture === 'tap' && sender) {
+        this.macReplyTo = sender;
+        this.macReplyCursor = 0;
+        this.screen = 'mac-reply';
+        await this.render();
+        return;
+      }
       if (gesture === 'doubleTap' || gesture === 'tap') {
         // 대화 전문에서 왔으면 대화 목록으로, 알림에서 왔으면 알림 목록으로.
         this.screen = this.openNotif?.id ? 'notifications' : 'history';
@@ -3004,12 +3040,35 @@ export class GlassesUI {
       return;
     }
 
+    // 답장 고르기: 탭하면 맥에서 보낸다. 마지막 줄은 취소.
+    if (this.screen === 'mac-reply') {
+      const replies = quickReplies();
+      if (gesture === 'doubleTap') {
+        this.screen = 'notification';
+        await this.render();
+        return;
+      }
+      if (this.moveCursor(gesture, selectedIndex, 'macReplyCursor', replies.length + 1)) {
+        await this.render();
+        return;
+      }
+      if (gesture !== 'tap') return;
+      const text = replies[this.macReplyCursor];
+      if (!text) {
+        this.screen = 'notification';
+        await this.render();
+        return;
+      }
+      return this.sendReply(this.macReplyTo ?? '', text);
+    }
+
     // 결과: 아무 탭이나 돌아간다. 도는 중에는 기다린다.
     if (this.screen === 'mac-result') {
       if (this.macResult?.state === 'running') return;
       if (gesture !== 'tap' && gesture !== 'doubleTap') return;
-      if (this.macResultBack === 'mac-shortcuts') {
-        this.screen = 'mac-shortcuts';
+      if (this.macResultBack === 'mac-shortcuts' || this.macResultBack === 'notifications') {
+        this.screen = this.macResultBack;
+        if (this.screen === 'notifications') this.openNotif = null;
         await this.render();
         return;
       }

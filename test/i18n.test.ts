@@ -360,6 +360,7 @@ test('아래 안내 줄: 안내와 오른쪽 글이 함께 들어간다', async 
       [m.hintOpenBack, m.sessionsTotal(20)],
       [m.hintOpenBack, m.legendUnread],
       [m.hintCloseBack, ''],
+      [m.hintReplyBack, ''],
       [m.hintCheckBack, m.addOnPhoneWeb],
       [m.hintRunBack, m.registerOnPhoneWeb],
       [m.hintRunAnyway, ''],

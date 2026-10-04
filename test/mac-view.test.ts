@@ -473,3 +473,60 @@ test('텔레프롬프터: 원고가 없으면 탭으로 맥 클립보드를 불�
     h.restore();
   }
 });
+
+test('메시지 알림: 탭하면 답장 목록, 고르면 맥에서 보내고 결과 뒤 알림 목록으로. 다른 알림은 탭이 닫기', async () => {
+  const h = await harness({ '/messages/reply': { status: 'sent', to: '홍길동' } });
+  try {
+    const r = h.r as unknown as Record<string, unknown> & { render(): Promise<void> };
+    r.openNotif = { id: 'n1', title: '[메시지] 홍길동', body: '오늘 저녁 몇 시에 와?', kind: 'info', createdAt: new Date().toISOString() };
+    r.screen = 'notification';
+    await r.render();
+
+    await h.fire('tap');
+    assert.equal(h.r.screen, 'mac-reply');
+    assert.equal(h.lists.at(-1)!.header, '홍길동에게 답장 · 더블탭 뒤로');
+    assert.deepEqual(h.lists.at(-1)!.items, ['알겠어요.', '곧 갈게요.', '지금은 어려워요. 나중에 연락할게요.', '고마워요!', '취소']);
+    for (const item of h.lists.at(-1)!.items) assert.ok(Buffer.byteLength(String(item)) <= 63);
+
+    await h.fire('tap', 1);
+    assert.deepEqual(h.calls.at(-1), { path: '/messages/reply', body: { to: '홍길동', text: '곧 갈게요.' } });
+    assert.match(h.texts.at(-1)!, /홍길동에게 답장 · 완료\n곧 갈게요\./);
+
+    await h.fire('tap');
+    assert.equal(h.r.screen, 'notifications');
+
+    // 취소는 아무것도 보내지 않고 알림으로 돌아간다.
+    r.openNotif = { id: 'n2', title: '[메시지] 홍길동', body: '?', kind: 'info', createdAt: new Date().toISOString() };
+    r.screen = 'notification';
+    await r.render();
+    await h.fire('tap');
+    await h.fire('tap', 4);
+    assert.equal(h.r.screen, 'notification');
+    assert.equal(h.calls.filter((c) => c.path === '/messages/reply').length, 1);
+
+    // 메시지가 아닌 알림은 예전처럼 탭이 닫기다.
+    r.openNotif = { id: 'n3', title: '[카카오톡] 홍길동', body: '?', kind: 'info', createdAt: new Date().toISOString() };
+    r.screen = 'notification';
+    await r.render();
+    await h.fire('tap');
+    assert.equal(h.r.screen, 'notifications');
+  } finally {
+    h.restore();
+  }
+});
+
+test('메시지 답장이 꺼져 있으면 맥의 사유를 보여 준다', async () => {
+  const err = Object.assign(new Error('메시지 답장이 꺼져 있습니다. 맥의 mac-agent 설정에서 켜세요.'), { code: 'messages_disabled', status: 403 });
+  const h = await harness({ '/messages/reply': err });
+  try {
+    const r = h.r as unknown as Record<string, unknown> & { render(): Promise<void> };
+    r.openNotif = { id: 'n1', title: '[메시지] 홍길동', body: '?', kind: 'info', createdAt: new Date().toISOString() };
+    r.screen = 'notification';
+    await r.render();
+    await h.fire('tap');
+    await h.fire('tap', 0);
+    assert.match(h.texts.at(-1)!, /실패\n메시지 답장이 꺼져 있습니다/);
+  } finally {
+    h.restore();
+  }
+});

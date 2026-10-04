@@ -305,6 +305,23 @@ export function shortcutPage(name: string, state: string, output: string | undef
   return page(`${name} · ${status}`, body, m.hintBackToList);
 }
 
+/** 메시지 알림 제목에서 보낸 사람을 꺼낸다. "[메시지] 홍길동" → "홍길동". notify-agent가 이 모양으로 넘긴다. */
+export function messageSender(title: string | undefined): string | undefined {
+  for (const prefix of ['[메시지] ', '[Messages] ']) {
+    if (title?.startsWith(prefix)) {
+      const name = title.slice(prefix.length).trim();
+      return name || undefined;
+    }
+  }
+  return undefined;
+}
+
+/** 안경에서 고를 수 있는 짧은 답장. 마지막은 취소. */
+export function quickReplies(): string[] {
+  const m = msg();
+  return [m.replyOk, m.replyOnMyWay, m.replyLater, m.replyThanks];
+}
+
 /** 화면에 띄울 오류 글. 서버가 준 코드가 사유로 알려진 것이면 짧은 사유로 바꾼다. */
 export function errorText(err: unknown): string {
   const e = err as { code?: string; message?: string };

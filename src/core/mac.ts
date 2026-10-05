@@ -108,13 +108,14 @@ export const MAC_COLS = 44;
 export const MAC_ROWS = 10;
 
 /** 기능을 못 쓰는 사유를 짧은 글로. 모르는 사유는 '쓸 수 없음'. */
-export function reasonText(reason: string | undefined): string {
+export function reasonText(reason: string | undefined, agent = 'mac-agent'): string {
   const m = msg();
   switch (reason) {
     case 'license_required':
       return m.reasonLicense;
     case 'folder_missing':
-      return m.reasonFolderMissing;
+      // PC(win-agent)는 단축어 대신 스크립트 폴더
+      return agent === 'win-agent' ? m.reasonScriptFolderMissing : m.reasonFolderMissing;
     case 'folder_empty':
       return m.reasonFolderEmpty;
     case 'automation_denied':
@@ -139,11 +140,12 @@ export function reasonText(reason: string | undefined): string {
 }
 
 /** 메뉴 한 줄. 못 쓰는 기능은 사유를 붙인다. */
-export function macItemLabel(item: MacItem, caps: ExtCapability[]): string {
-  const label = msg()[item.label];
+export function macItemLabel(item: MacItem, caps: ExtCapability[], agent = 'mac-agent'): string {
+  // PC(win-agent)는 맥의 단축어 자리에 스크립트 폴더를 쓴다.
+  const label = agent === 'win-agent' && item.label === 'macShortcuts' ? msg().macScripts : msg()[item.label];
   const cap = caps.find((c) => c.id === item.capability);
   if (!cap) return `${label} · ${msg().reasonUnavailable}`;
-  return cap.ready ? label : `${label} · ${reasonText(cap.reason)}`;
+  return cap.ready ? label : `${label} · ${reasonText(cap.reason, agent)}`;
 }
 
 /**

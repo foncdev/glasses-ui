@@ -1773,7 +1773,7 @@ export class GlassesUI {
             ? [m.reading]
             : this.macCaps === null
               ? [m.macNotConnected]
-              : MAC_ITEMS.map((i) => macItemLabel(i, this.macCaps as ExtCapability[]));
+              : MAC_ITEMS.map((i) => macItemLabel(i, this.macCaps as ExtCapability[], agentCli.desktopAgent));
         await this.glasses.showList(m.withBack(this.macCaps ? m.deviceWord(agentCli.desktopAgent) : m.menuMac), rows);
         return;
       }

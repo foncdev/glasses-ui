@@ -642,3 +642,10 @@ test('PC(win-agent) 텔레프롬프터: 원고가 있으면 탭은 따라가기 
     h.restore();
   }
 });
+
+test('PC(win-agent) 컴퓨터 메뉴: 단축어 자리는 스크립트, 폴더가 없으면 스크립트 폴더 없음', () => {
+  const item = MAC_ITEMS.find((i) => i.capability === 'shortcuts')!;
+  assert.equal(macItemLabel(item, [{ id: 'shortcuts', ready: true }], 'win-agent'), '스크립트');
+  assert.equal(macItemLabel(item, [{ id: 'shortcuts', ready: false, reason: 'folder_missing' }], 'win-agent'), '스크립트 · 스크립트 폴더 없음');
+  assert.equal(macItemLabel(item, [{ id: 'shortcuts', ready: false, reason: 'folder_missing' }]), '단축어 · Relay 폴더 없음');
+});

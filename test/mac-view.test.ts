@@ -98,6 +98,12 @@ test('자막: 옮긴 글이 있으면 그걸 보이고, 번역 언어가 없으�
 
   const missing = captionsPage(lines, undefined, { running: true, translateError: 'translation_not_installed' }, undefined).split('\n');
   assert.equal(missing[1], '맥에서 번역 언어를 내려받으세요');
+
+  // PC는 같은 사유라도 PC에 맞는 말로
+  const pc = captionsPage(lines, undefined, { running: true, translateError: 'translation_local_en_only' }, undefined, 'win-agent').split('\n');
+  assert.equal(pc[1], 'PC 안 번역은 영어로만 됩니다');
+  const cloud = captionsPage(lines, undefined, { running: true, translateError: 'translation_unsupported' }, undefined, 'win-agent').split('\n');
+  assert.equal(cloud[1], 'PC 설정에서 클라우드 번역을 고르세요');
 });
 
 test('자막이 꺼져 있으면 탭하라고 알린다', () => {

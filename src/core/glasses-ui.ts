@@ -1782,7 +1782,7 @@ export class GlassesUI {
         return;
       }
       if (this.screen === 'mac-captions') {
-        await this.glasses.showText(captionsPage(this.macCaptionLines, this.macPartial, this.macCaptionsState, this.macError));
+        await this.glasses.showText(captionsPage(this.macCaptionLines, this.macPartial, this.macCaptionsState, this.macError, agentCli.desktopAgent));
         return;
       }
       if (this.screen === 'mac-meeting') {

@@ -132,8 +132,14 @@ export function reasonText(reason: string | undefined, agent = 'mac-agent'): str
     case 'translation_not_installed':
       return m.reasonTranslationModel;
     case 'translation_unsupported':
+      // PC(win-agent)는 OS 버전 문제가 아니라 번역기를 고르지 않은 것
+      return agent === 'win-agent' ? m.reasonTranslationCloud : m.reasonMacOS;
     case 'macos_too_old':
       return m.reasonMacOS;
+    case 'translation_local_en_only':
+      return m.reasonTranslationEnOnly;
+    case 'model_missing':
+      return m.reasonModelMissing;
     default:
       return m.reasonUnavailable;
   }
@@ -242,6 +248,7 @@ export function captionsPage(
   partial: CaptionLine | undefined,
   state: CaptionsState | undefined,
   error: string | undefined,
+  agent = 'mac-agent',
 ): string {
   const m = msg();
   const running = state?.running ?? false;
@@ -254,7 +261,7 @@ export function captionsPage(
   const texts = [...lines.slice(-4).map((l) => l.translation ?? l.text), ...(partial?.text ? [partial.text] : [])];
   let rows = texts.flatMap((t) => wrapLines(t, MAC_COLS, room));
   rows = rows.slice(-room);
-  const problem = error ?? (state?.translateError ? reasonText(state.translateError) : undefined);
+  const problem = error ?? (state?.translateError ? reasonText(state.translateError, agent) : undefined);
   if (problem) rows = [clip(problem, MAC_COLS), ...rows.slice(-(room - 1))];
   if (rows.length === 0) rows = [running ? m.captionsEmpty : m.captionsIdle];
   return page(head, rows, hint);

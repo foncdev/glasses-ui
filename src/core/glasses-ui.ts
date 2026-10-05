@@ -3028,6 +3028,10 @@ export class GlassesUI {
       if (gesture === 'tap') {
         if (!this.macPrompter?.hasScript) return this.prompterCommand('/prompter/load-clipboard');
         if (this.macPrompter.mode === 'timeline') return this.prompterCommand('/prompter/play', { on: !this.macPrompter.playing });
+        // PC(win-agent)는 말 따라가기(받아쓰기)가 아직 없다. 탭은 다음 화면으로.
+        if (agentCli.desktopAgent === 'win-agent') {
+          return paged ? this.prompterCommand('/prompter/page', { delta: 1 }) : this.prompterCommand('/prompter/next');
+        }
         return this.prompterCommand('/prompter/follow', { on: !this.macPrompter.following });
       }
       return;

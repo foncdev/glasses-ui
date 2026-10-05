@@ -505,7 +505,7 @@ test('텔레프롬프터: 원고가 없으면 탭으로 맥 클립보드를 불�
     await h.fire('tap', 4);
     assert.equal(h.r.screen, 'mac-prompter');
     assert.equal(h.r.idleTimer, undefined, '원고 화면에서는 꺼지지 않는다');
-    assert.match(h.texts.at(-1)!, /맥에서 원고를 복사한 뒤 탭하세요/);
+    assert.match(h.texts.at(-1)!, /컴퓨터에서 원고를 복사한 뒤 탭하세요/);
 
     await h.fire('tap');
     assert.equal(h.calls.at(-1)!.path, '/prompter/load-clipboard');
@@ -620,5 +620,25 @@ test('고른 데스크톱 에이전트의 경로로 부른다(/ext/win-agent/…
   } finally {
     cli.request = origRequest;
     agentCli.desktopAgent = before;
+  }
+});
+
+test('PC(win-agent) 텔레프롬프터: 원고가 있으면 탭은 따라가기 대신 다음 줄로', async () => {
+  const lines = Array.from({ length: 10 }, (_, i) => `${i + 1}번째 줄`);
+  let state = { hasScript: true, following: false, line: 0, total: 10, start: 0, lines, mode: 'manual' } as unknown as PrompterState;
+  const h = await harness({
+    '/prompter/state': () => state,
+    '/prompter/next': () => (state = { ...state, line: state.line + 1 } as PrompterState),
+  }, [{ id: 'prompter', ready: true }], 'win-agent');
+  try {
+    await h.r.openMenu('mac');
+    const index = h.lists.at(-1)!.items.findIndex((i) => String(typeof i === 'string' ? i : (i as { label?: string }).label ?? i).includes('텔레프롬프터'));
+    await h.fire('tap', index);
+    assert.equal(h.r.screen, 'mac-prompter');
+    await h.fire('tap');
+    assert.equal(h.calls.at(-1)!.path, '/prompter/next');
+    assert.ok(!h.calls.some((c) => c.path === '/prompter/follow'));
+  } finally {
+    h.restore();
   }
 });

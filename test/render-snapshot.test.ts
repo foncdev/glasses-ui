@@ -225,5 +225,5 @@ test('홈 요약 한 줄이 그대로다', async () => {
 
   // 세션 5개 중 busy 2개(b, d) · 안읽음 1 · 체크 1/2
   assert.match(out.header, /세션/);
-  assert.deepEqual(out.items, ['에이전트', '알림 보기', '체크 보기', '시스템', '명령', '맥', '타이머 · 물', '설정']);
+  assert.deepEqual(out.items, ['에이전트', '알림 보기', '체크 보기', '시스템', '명령', '컴퓨터', '타이머 · 물', '설정']);
 });

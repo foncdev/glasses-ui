@@ -171,7 +171,7 @@ test('영어로 두면 홈 메뉴·요약이 영어로 그려진다', async () =
       const v = sink.home.at(-1)!;
       assert.deepEqual(
         v.items.map((i) => i.label),
-        ['Agents', 'Notifications', 'To-Dos', 'System', 'Commands', 'Mac', 'Timer · Water', 'Settings'],
+        ['Agents', 'Notifications', 'To-Dos', 'System', 'Commands', 'Computer', 'Timer · Water', 'Settings'],
       );
       const meta = Object.fromEntries(v.items.map((i) => [i.label, i.meta]));
       assert.equal(meta.Notifications, '7 new');

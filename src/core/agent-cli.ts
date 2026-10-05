@@ -11,6 +11,10 @@ import { msg } from './i18n.js';
 
 import type { ExtAgent } from './mac.js';
 
+/** 폰·안경이 다루는 데스크톱 에이전트. 앞에 둔 것을 먼저 고른다. */
+export const DESKTOP_AGENTS = ['mac-agent', 'win-agent'] as const;
+export type DesktopAgentName = (typeof DESKTOP_AGENTS)[number];
+
 export interface SessionInfo {
   id: string;
   workspaceId: string;
@@ -254,9 +258,13 @@ export class AgentCliClient {
     return body as T;
   }
 
-  // --- 확장 에이전트(mac-agent) ---
+  // --- 확장 에이전트(mac-agent·win-agent) ---
   //
   // relay-service의 /ext 통로로 붙은 에이전트. 서버는 이름으로 나눠 넘기기만 한다.
+  // 맥(mac-agent)과 윈도우 PC(win-agent)는 규약이 같아, 붙은 쪽을 골라 같은 경로로 부른다.
+
+  /** 지금 다루는 데스크톱 에이전트. 컴퓨터 화면에 들어올 때 /ext 목록을 보고 고른다. */
+  desktopAgent: DesktopAgentName = 'mac-agent';
 
   /** 붙어 있는 확장 에이전트와 각자의 기능 목록. */
   async listExt(): Promise<ExtAgent[]> {
@@ -270,7 +278,7 @@ export class AgentCliClient {
    * (relay는 30초에 끊고, mac-agent는 25초가 넘으면 '도는 중'으로 먼저 답한다).
    */
   mac<T>(path: string, body?: unknown, timeoutMs?: number): Promise<T> {
-    return this.request<T>(`/ext/mac-agent${path}`, {
+    return this.request<T>(`/ext/${this.desktopAgent}${path}`, {
       ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
       ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
@@ -286,7 +294,7 @@ export class AgentCliClient {
     onEvent: (type: string, data: unknown) => void,
     onError?: (message: string) => void,
   ): () => void {
-    const url = `${this.baseUrl}/ext/mac-agent${path}${
+    const url = `${this.baseUrl}/ext/${this.desktopAgent}${path}${
       this.apiKey ? `?token=${encodeURIComponent(this.apiKey)}` : ''
     }`;
     try {

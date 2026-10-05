@@ -153,7 +153,7 @@ test('메뉴: 못 쓰는 기능엔 사유가 붙고, 글은 목록 칸(63바이�
 });
 
 test('오류 글: 서버 코드로 짧은 사유를 고른다', () => {
-  assert.equal(errorText({ code: 'no_agent', message: '연결된 mac-agent가 없습니다.' }), '맥이 연결되지 않았습니다');
+  assert.equal(errorText({ code: 'no_agent', message: '연결된 mac-agent가 없습니다.' }), '컴퓨터가 연결되지 않았습니다');
   assert.equal(errorText({ code: 'license_required', message: '긴 문구' }), '라이선스 필요');
   assert.equal(errorText({ code: 'something', message: '그대로' }), '그대로');
 });
@@ -179,7 +179,7 @@ interface Harness {
 async function harness(responses: Record<string, unknown>, caps = [
   { id: 'present', ready: true }, { id: 'captions', ready: true }, { id: 'calendar', ready: true }, { id: 'shortcuts', ready: true },
   { id: 'prompter', ready: true },
-]): Promise<Harness & { restore(): void }> {
+], agent = 'mac-agent'): Promise<Harness & { restore(): void }> {
   const lists: Harness['lists'] = [];
   const texts: string[] = [];
   const calls: Harness['calls'] = [];
@@ -203,7 +203,7 @@ async function harness(responses: Record<string, unknown>, caps = [
     sysSummary: async () => { throw new Error('x'); },
     listSnippets: async () => [],
     streamEvents: () => () => undefined,
-    listExt: async () => (caps ? [{ agent: 'mac-agent', name: '맥', version: '1', capabilities: caps }] : []),
+    listExt: async () => (caps ? [{ agent, name: '맥', version: '1', capabilities: caps }] : []),
     mac: async (path: string, body?: unknown) => {
       calls.push({ path, body });
       const r = responses[path];
@@ -388,7 +388,7 @@ test('못 쓰는 기능을 누르면 사유와 고칠 곳을 보여 주고 아�
     assert.equal(h.lists.at(-1)!.items[0], '발표 리모컨 · 라이선스 필요');
     await h.fire('tap', 0);
     assert.equal(h.r.screen, 'mac-result');
-    assert.match(h.texts.at(-1)!, /라이선스 필요\n맥의 메뉴바에서 설정하세요/);
+    assert.match(h.texts.at(-1)!, /라이선스 필요\n맥의 메뉴바나 PC의 트레이에서 설정하세요/);
     assert.equal(h.calls.length, 0);
     await h.fire('doubleTap');
     assert.equal(h.r.screen, 'mac');
@@ -401,7 +401,7 @@ test('맥이 붙어 있지 않으면 그렇게 알리고 탭해도 아무 일 �
   const h = await harness({}, null as unknown as []);
   try {
     await h.r.openMenu('mac');
-    assert.deepEqual(h.lists.at(-1)!.items, ['맥이 연결되지 않았습니다']);
+    assert.deepEqual(h.lists.at(-1)!.items, ['컴퓨터가 연결되지 않았습니다']);
     await h.fire('tap', 0);
     assert.equal(h.r.screen, 'mac');
     await h.fire('doubleTap');
@@ -585,5 +585,40 @@ test('메시지 답장이 꺼져 있으면 맥의 사유를 보여 준다', asyn
     assert.match(h.texts.at(-1)!, /실패\n메시지 답장이 꺼져 있습니다/);
   } finally {
     h.restore();
+  }
+});
+
+test('PC(win-agent)만 붙어 있으면 그쪽을 고르고 제목을 PC로 한다', async () => {
+  const h = await harness({}, [{ id: 'present', ready: true }], 'win-agent');
+  try {
+    await h.r.openMenu('mac');
+    assert.equal(agentCli.desktopAgent, 'win-agent');
+    assert.match(h.lists.at(-1)!.header, /^PC/);
+  } finally {
+    h.restore();
+  }
+  assert.equal(agentCli.desktopAgent, 'mac-agent', 'restore가 되돌린다');
+});
+
+test('고른 데스크톱 에이전트의 경로로 부른다(/ext/win-agent/…)', async () => {
+  const before = agentCli.desktopAgent;
+  const seen: string[] = [];
+  const cli = agentCli as unknown as { request: (path: string) => Promise<unknown> };
+  const origRequest = cli.request;
+  cli.request = async (path: string) => {
+    seen.push(path);
+    return {};
+  };
+  // 앞 시험의 harness가 mac을 인스턴스에 덮어 둔 채라 원래 메서드를 부른다.
+  const mac = Object.getPrototypeOf(agentCli).mac as typeof agentCli.mac;
+  try {
+    agentCli.desktopAgent = 'win-agent';
+    await mac.call(agentCli, '/info');
+    agentCli.desktopAgent = 'mac-agent';
+    await mac.call(agentCli, '/present/state');
+    assert.deepEqual(seen, ['/ext/win-agent/info', '/ext/mac-agent/present/state']);
+  } finally {
+    cli.request = origRequest;
+    agentCli.desktopAgent = before;
   }
 });

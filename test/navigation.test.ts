@@ -141,7 +141,7 @@ test('홈은 요약과 메뉴를 보여준다', async () => {
   const { shown, restore } = await atHome();
   try {
     const last = shown.at(-1)!;
-    assert.deepEqual(last.items, ['에이전트', '알림 보기', '체크 보기', '시스템', '명령', '맥', '타이머 · 물', '설정']);
+    assert.deepEqual(last.items, ['에이전트', '알림 보기', '체크 보기', '시스템', '명령', '컴퓨터', '타이머 · 물', '설정']);
     // 상단 한 줄에 세션·알림·체크가 모두 있어야 한다.
     assert.match(last.header, /세션 .*알림 .*체크/);
   } finally {

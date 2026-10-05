@@ -9,6 +9,8 @@
 import {
   agentCli,
   AgentCliError,
+  DESKTOP_AGENTS,
+  type DesktopAgentName,
   type ChecklistItem,
   type Notification,
   type SessionEvent,
@@ -1772,7 +1774,7 @@ export class GlassesUI {
             : this.macCaps === null
               ? [m.macNotConnected]
               : MAC_ITEMS.map((i) => macItemLabel(i, this.macCaps as ExtCapability[]));
-        await this.glasses.showList(m.withBack(m.menuMac), rows);
+        await this.glasses.showList(m.withBack(this.macCaps ? m.deviceWord(agentCli.desktopAgent) : m.menuMac), rows);
         return;
       }
       if (this.screen === 'mac-present') {
@@ -2430,7 +2432,12 @@ export class GlassesUI {
   private async refreshMacCaps(): Promise<void> {
     try {
       const agents = await agentCli.listExt();
-      this.macCaps = agents.find((a) => a.agent === 'mac-agent')?.capabilities ?? null;
+      // 고른 적 있는 쪽이 붙어 있으면 그쪽, 아니면 맥 → PC 순서로 처음 붙은 것.
+      const desk =
+        agents.find((a) => a.agent === agentCli.desktopAgent) ??
+        DESKTOP_AGENTS.map((name) => agents.find((a) => a.agent === name)).find(Boolean);
+      if (desk) agentCli.desktopAgent = desk.agent as DesktopAgentName;
+      this.macCaps = desk?.capabilities ?? null;
     } catch (err) {
       this.macCaps = null;
       this.log(errorText(err), 'warn');

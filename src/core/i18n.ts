@@ -54,10 +54,11 @@ const ko = {
   menuPhone: '타이머 · 물',
   menuSettings: '설정',
 
-  // --- 맥 (mac-agent) ---
-  menuMac: '맥',
-  macNotConnected: '맥이 연결되지 않았습니다',
-  macFixOnMac: '맥의 메뉴바에서 설정하세요',
+  // --- 컴퓨터 (맥 mac-agent · PC win-agent) ---
+  menuMac: '컴퓨터',
+  deviceWord: (agent: string) => (agent === 'win-agent' ? 'PC' : '맥'),
+  macNotConnected: '컴퓨터가 연결되지 않았습니다',
+  macFixOnMac: '맥의 메뉴바나 PC의 트레이에서 설정하세요',
   macPresent: '발표 리모컨',
   macCaptions: '회의 자막',
   macMeeting: '다음 회의',
@@ -403,10 +404,11 @@ const en: Messages = {
   menuPhone: 'Timer · Water',
   menuSettings: 'Settings',
 
-  // --- Mac (mac-agent) ---
-  menuMac: 'Mac',
-  macNotConnected: 'Mac not connected',
-  macFixOnMac: 'Set it up from the Mac menu bar',
+  // --- Computer (Mac mac-agent · PC win-agent) ---
+  menuMac: 'Computer',
+  deviceWord: (agent) => (agent === 'win-agent' ? 'PC' : 'Mac'),
+  macNotConnected: 'Computer not connected',
+  macFixOnMac: 'Set it up from the Mac menu bar or PC tray',
   macPresent: 'Presenter',
   macCaptions: 'Captions',
   macMeeting: 'Next meeting',

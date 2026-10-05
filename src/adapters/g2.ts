@@ -337,4 +337,9 @@ export class G2Adapter implements GlassesAdapter {
     this.unsubscribe = undefined;
     await this.display.shutdown();
   }
+
+  /** 홈에서 더블탭하면 시스템 종료 확인 창을 띄운다. 나가면 기기가 앱을 닫는다. */
+  async requestExit(): Promise<void> {
+    await this.display.requestExit();
+  }
 }

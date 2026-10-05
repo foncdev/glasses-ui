@@ -2792,8 +2792,13 @@ export class GlassesUI {
         await this.render();
         return;
       }
-      // 최상위라 더블탭으로 갈 곳이 없다. 대신 화면 끄기·종료·취소를 고른다.
+      // 최상위라 더블탭으로 갈 곳이 없다. 기기에 종료 확인 창이 있으면 그것을 띄우고(나갈지는 사용자가
+      // 그 창에서 정한다), 없으면 화면 끄기·종료·취소를 고른다.
       if (gesture === 'doubleTap') {
+        if (this.glasses.requestExit) {
+          await this.glasses.requestExit();
+          return;
+        }
         this.screen = 'home-menu';
         this.homeMenuCursor = 0;
         await this.render();

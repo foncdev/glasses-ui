@@ -621,3 +621,39 @@ test('홈 더블탭 선택지: 취소·더블탭은 홈으로, 종료하기는 �
     restore();
   }
 });
+
+test('기기에 종료 확인 창이 있으면 홈 더블탭이 그 창을 띄우고, 자기 메뉴는 띄우지 않는다', async () => {
+  const { r, shown, glasses, fire, restore } = await atHome();
+  let asked = 0;
+  (glasses as { requestExit?: () => Promise<void> }).requestExit = async () => {
+    asked += 1;
+  };
+  try {
+    const before = shown.length;
+    fire('doubleTap');
+    await settle();
+    assert.equal(asked, 1, '시스템 종료 창을 한 번 띄운다');
+    assert.equal(r.screen, 'home', '나갈지는 시스템 창에서 정하니 화면은 홈 그대로');
+    assert.equal(shown.length, before, '화면 꺼짐·종료하기·취소 메뉴를 그리지 않는다');
+  } finally {
+    restore();
+  }
+});
+
+test('홈이 아닌 화면의 더블탭은 종료 창을 띄우지 않고 한 단계 위로 간다', async () => {
+  const { r, glasses, fire, restore } = await atHome();
+  let asked = 0;
+  (glasses as { requestExit?: () => Promise<void> }).requestExit = async () => {
+    asked += 1;
+  };
+  try {
+    fire('tap', 0); // → sessions
+    await settle();
+    fire('doubleTap');
+    await settle();
+    assert.equal(r.screen, 'home');
+    assert.equal(asked, 0);
+  } finally {
+    restore();
+  }
+});

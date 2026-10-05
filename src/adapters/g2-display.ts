@@ -685,6 +685,14 @@ export class G2Display {
   async shutdown(): Promise<void> {
     await this.bridge?.shutDownPageContainer(0);
   }
+
+  /**
+   * 시스템 종료 확인 창을 띄운다(exitMode 1). 사용자가 나가기를 고르면 기기가 웹뷰까지 닫는다.
+   * 스토어 심사 기준이 루트 화면 더블탭에 이 방식을 요구한다. 즉시 종료(0)는 받지 않는다.
+   */
+  async requestExit(): Promise<void> {
+    await this.bridge?.shutDownPageContainer(1);
+  }
 }
 
 export const LIST_CONTAINER_NAME = LIST_NAME;

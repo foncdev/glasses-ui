@@ -332,7 +332,8 @@ export function captionsPage(
   // 옮긴 글이 있으면 그걸 보인다. 안경은 좁아 둘 다 띄우면 두 줄 남짓밖에 안 남는다.
   // 말하는 중인 줄은 원문 그대로다 — 굳어야 옮긴다.
   const texts = [...lines.slice(-4).map((l) => l.translation ?? l.text), ...(partial?.text ? [partial.text] : [])];
-  let rows = texts.flatMap((t) => wrapLines(t, MAC_COLS, room));
+  // 줄마다 끝까지 접고 아래쪽을 남긴다. 한 줄이 화면보다 길면(쉼 없이 20초) 앞이 밀려나고 지금 하는 말이 보인다.
+  let rows = texts.flatMap((t) => wrapLines(t, MAC_COLS, Number.MAX_SAFE_INTEGER));
   rows = rows.slice(-room);
   const problem = error ?? (state?.translateError ? reasonText(state.translateError, agent) : undefined);
   if (problem) rows = [clip(problem, MAC_COLS), ...rows.slice(-(room - 1))];

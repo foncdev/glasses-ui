@@ -100,6 +100,15 @@ test('자막: 맨 아래가 지금 하는 말이고, 넘치면 위가 밀려난�
   assert.equal(rows.at(-1), msg().captionsHintOn);
 });
 
+test('자막: 말하는 중인 줄이 화면보다 길면 앞이 밀려나고 끝(지금 하는 말)이 보인다', () => {
+  const partial = { id: 1, text: `${'앞에서 한 말 '.repeat(40)}마지막 낱말`, final: false, at: '' };
+  const page = captionsPage([], partial, { running: true }, undefined);
+  fitsScreen(page);
+  const rows = page.split('\n');
+  assert.match(rows.at(-2) ?? '', /마지막 낱말$/);
+  assert.ok(!page.includes('…'));
+});
+
 test('자막: 옮긴 글이 있으면 그걸 보이고, 번역 언어가 없으면 맨 위에 알린다', () => {
   const lines: CaptionLine[] = [
     { id: 1, text: 'We decided to ship.', final: true, at: '', translation: '출시하기로 했습니다.' },

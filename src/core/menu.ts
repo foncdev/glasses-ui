@@ -13,6 +13,7 @@ export const MENU_ITEMS = [
   { id: 'notifications', label: 'menuNotifications' },
   { id: 'checklist', label: 'menuChecklist' },
   { id: 'system', label: 'menuSystem' },
+  { id: 'monitor', label: 'menuMonitor' },
   { id: 'mac', label: 'menuMac' },
   { id: 'commands', label: 'menuCommands' },
   { id: 'settings', label: 'menuSettings' },
@@ -27,7 +28,7 @@ export interface MenuConfig {
 
 /** 기본 순서. 명령은 기본으로 숨긴다. */
 export const DEFAULT_MENU: MenuConfig = {
-  order: ['sessions', 'phone', 'notifications', 'checklist', 'system', 'mac', 'settings', 'commands'],
+  order: ['sessions', 'phone', 'notifications', 'checklist', 'system', 'monitor', 'mac', 'settings', 'commands'],
   hidden: ['commands'],
 };
 
@@ -59,9 +60,14 @@ export function sameMenu(a: MenuConfig, b: MenuConfig): boolean {
   return a.order.join() === b.order.join() && a.hidden.join() === b.hidden.join();
 }
 
-/** 홈에 보일 항목. 컴퓨터는 맥·PC가 연결됐을 때만 보인다. */
-export function visibleMenu(config: MenuConfig, computerLinked: boolean): MenuId[] {
-  return config.order.filter((id) => !config.hidden.includes(id) && (id !== 'mac' || computerLinked));
+/**
+ * 홈에 보일 항목. 컴퓨터는 맥·PC가 연결됐을 때만, 모니터링은 relay에 설정이 있을 때만 보인다.
+ * 폰 앱이 모니터링을 모르면 순서에서 빠진 채 오고, normalizeMenu가 기본 순서대로 끝에 붙인다.
+ */
+export function visibleMenu(config: MenuConfig, computerLinked: boolean, monitorEnabled = false): MenuId[] {
+  return config.order.filter(
+    (id) => !config.hidden.includes(id) && (id !== 'mac' || computerLinked) && (id !== 'monitor' || monitorEnabled),
+  );
 }
 
 export function menuLabel(id: MenuId): string {

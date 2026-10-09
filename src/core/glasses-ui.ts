@@ -96,6 +96,7 @@ import {
   MAC_ROWS,
 } from './mac.js';
 import { paginate, padWidth, parseUsage, plainText, shortReset, usageBar } from './reader.js';
+import { groupRows, homeMeta, itemPage, itemRows, monitorHeader, type MonitorSnapshot } from './monitor.js';
 
 /**
  * 화면 구성.
@@ -120,6 +121,9 @@ type Screen =
   | 'notification'
   | 'checklist'
   | 'system'
+  | 'monitor'
+  | 'monitor-group'
+  | 'monitor-item'
   | 'commands'
   | 'command-result'
   | 'phone'
@@ -612,6 +616,14 @@ export class GlassesUI {
   private phoneCursor = 0;
   /** 홈 더블탭 선택지의 커서. */
   private homeMenuCursor = 0;
+  /** 모니터링(relay GET /monitor). 옛 relay·설정 없음이면 비었거나 enabled: false. */
+  private monitor?: MonitorSnapshot;
+  private monCursor = 0;
+  private monItemCursor = 0;
+  /** 들어가 보고 있는 그룹. 순서가 바뀌어도(문제 있는 것이 앞) 같은 그룹에 머물게 이름으로 쥔다. */
+  private monGroupId = '';
+  /** 펼쳐 보고 있는 대상. 다시 읽어 순서가 바뀌어도 같은 대상을 보인다. */
+  private monItemId = '';
   /** 종료했는지. 폰 화면(웹뷰)은 남아 주기 갱신이 돌 수 있어, 그려서 다시 열지 않게 막는다. */
   private stopped = false;
 
@@ -862,7 +874,12 @@ export class GlassesUI {
   private watchServerData(): void {
     this.eventStop?.();
     this.eventStop = agentCli.streamEvents(
-      () => {
+      (topic) => {
+        // 모니터링은 상태가 바뀔 때 온다. 그것만 다시 읽는다 — 나머지까지 읽을 까닭이 없다.
+        if (topic === 'monitor') {
+          void this.onMonitorChanged();
+          return;
+        }
         // 화면이 꺼져 있어도 읽는다.
         //
         // 예전에는 여기서 건너뛰고 깨어날 때 읽었다. 그런데 안경은
@@ -961,7 +978,7 @@ export class GlassesUI {
 
   /** 지금 홈에 보일 항목. */
   private homeMenu(): MenuId[] {
-    return visibleMenu(this.menuConfig, this.computerLinked());
+    return visibleMenu(this.menuConfig, this.computerLinked(), this.monitor?.enabled === true);
   }
 
   private clampMenuCursor(): void {
@@ -1238,6 +1255,7 @@ export class GlassesUI {
       notifications: this.unread > 0 ? msg().homeUnread(this.unread) : '',
       checklist: this.checklist.length > 0 ? `${done} / ${this.checklist.length}` : '',
       commands: this.snippets.length > 0 ? String(this.snippets.length) : '',
+      monitor: homeMeta(this.monitor),
     };
 
     // 타이머·물이 있으면 자리가 모자라 연결 표시는 점만 남긴다.
@@ -1869,6 +1887,28 @@ export class GlassesUI {
         return;
       }
 
+      // 모니터링: 그룹 → 대상 → 대상 한 장.
+      if (this.screen === 'monitor') {
+        const m = msg();
+        const snap = this.monitor;
+        const rows = snap && snap.groups.length > 0 ? groupRows(snap) : [this.monitorEmptyRow()];
+        await this.glasses.showList(m.withBack(monitorHeader(snap, m.menuMonitor)), rows);
+        return;
+      }
+      if (this.screen === 'monitor-group') {
+        const m = msg();
+        const g = this.monGroup();
+        await this.glasses.showList(
+          m.withBack(monitorHeader(this.monitor, g?.name ?? m.menuMonitor)),
+          g && g.items.length > 0 ? itemRows(g) : [m.monitorNoData],
+        );
+        return;
+      }
+      if (this.screen === 'monitor-item') {
+        await this.glasses.showText(itemPage(this.monitor, this.monGroup(), this.monItemCursor));
+        return;
+      }
+
       // 8) 시스템 상태.
       if (this.screen === 'system') {
         if (this.glasses.showSystem) {
@@ -2068,7 +2108,7 @@ export class GlassesUI {
         const m = msg();
         const rows = this.menuConfig.order.map((id) => {
           const shown = !this.menuConfig.hidden.includes(id);
-          const note = id === 'mac' ? ` · ${m.menuWhenLinked}` : '';
+          const note = id === 'mac' ? ` · ${m.menuWhenLinked}` : id === 'monitor' ? ` · ${m.menuWhenSet}` : '';
           return `${shown ? '[x]' : '[ ]'} ${menuLabel(id)}${note}`;
         });
         await this.glasses.showList(m.withBack(m.menuEdit), [...rows, m.menuReset]);
@@ -2483,6 +2523,8 @@ export class GlassesUI {
       | 'slashCursor'
       | 'phoneCursor'
       | 'homeMenuCursor'
+      | 'monCursor'
+      | 'monItemCursor'
       | 'macCursor'
       | 'macShortcutCursor'
       | 'macPresentFileCursor'
@@ -2612,6 +2654,63 @@ export class GlassesUI {
     });
   }
 
+  // --- 모니터링 ---
+
+  /** 들어가 있는 그룹. 없어졌으면 undefined. */
+  private monGroup() {
+    return this.monitor?.groups.find((g) => g.id === this.monGroupId);
+  }
+
+  private monitorEmptyRow(): string {
+    const m = msg();
+    if (!this.monitor) return m.monitorLoading;
+    if (!this.monitor.enabled) return m.monitorOff;
+    return this.monitor.error ? clamp(this.monitor.error, 40) : m.monitorLoading;
+  }
+
+  /** relay의 지금 값을 읽는다. 실패하면 그 전 값을 둔다(옛 relay면 꺼진 것으로). */
+  private async loadMonitor(): Promise<void> {
+    try {
+      this.monitor = await agentCli.getMonitor();
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) this.monitor = undefined;
+    }
+    this.clampMonitorCursors();
+  }
+
+  /** 탭으로 다시 읽기. relay가 Grafana를 지금 읽게 한다. */
+  private async refreshMonitor(): Promise<void> {
+    try {
+      this.monitor = await agentCli.refreshMonitor();
+    } catch (err) {
+      this.log(String((err as Error).message), 'warn');
+    }
+    this.clampMonitorCursors();
+    await this.render();
+  }
+
+  /**
+   * relay가 상태가 바뀌었다고 알렸다. 모니터링 화면이나 홈이면 다시 그린다.
+   * 목록은 줄이 같으면 다시 세우지 않으므로(G2Display) 고른 칸은 그대로다.
+   */
+  private async onMonitorChanged(): Promise<void> {
+    const wasEnabled = this.monitor?.enabled === true;
+    await this.loadMonitor();
+    const onMonitor = this.screen === 'monitor' || this.screen === 'monitor-group' || this.screen === 'monitor-item';
+    if (onMonitor || this.screen === 'home' || wasEnabled !== (this.monitor?.enabled === true)) {
+      if (this.screen === 'home') this.clampMenuCursor();
+      if (!this.screenOff) await this.render();
+    }
+  }
+
+  private clampMonitorCursors(): void {
+    const groups = this.monitor?.groups ?? [];
+    this.monCursor = Math.min(this.monCursor, Math.max(groups.length - 1, 0));
+    const items = this.monGroup()?.items ?? [];
+    const at = this.screen === 'monitor-item' ? items.findIndex((i) => i.id === this.monItemId) : -1;
+    this.monItemCursor = at >= 0 ? at : Math.min(this.monItemCursor, Math.max(items.length - 1, 0));
+  }
+
   /**
    * 맥의 지금 상태를 다시 읽는다.
    *
@@ -2726,6 +2825,7 @@ export class GlassesUI {
     } catch {
       this.extLinked = false;
     }
+    await this.loadMonitor();
     this.clampMenuCursor();
     try {
       await this.refresh();
@@ -2793,6 +2893,14 @@ export class GlassesUI {
       } catch (err) {
         this.log(msg().loadCommandsFailed((err as Error).message), 'warn');
       }
+      await this.render();
+      return;
+    }
+    if (target === 'monitor') {
+      this.screen = 'monitor';
+      this.monCursor = 0;
+      await this.render();
+      await this.loadMonitor();
       await this.render();
       return;
     }
@@ -3398,6 +3506,62 @@ export class GlassesUI {
     if (this.screen === 'system') {
       if (gesture === 'doubleTap') return this.goHome();
       if (gesture === 'tap') await this.refreshSystem();
+      return;
+    }
+
+    // 모니터링 그룹 목록: 골라서 탭하면 그 그룹의 대상들.
+    if (this.screen === 'monitor') {
+      if (gesture === 'doubleTap') return this.goHome();
+      const groups = this.monitor?.groups ?? [];
+      if (this.moveCursor(gesture, selectedIndex, 'monCursor', groups.length)) return;
+      if (gesture === 'tap') {
+        const g = groups[this.monCursor];
+        if (!g) {
+          await this.refreshMonitor();
+          return;
+        }
+        this.monGroupId = g.id;
+        this.monItemCursor = 0;
+        this.screen = 'monitor-group';
+        await this.render();
+      }
+      return;
+    }
+
+    // 대상 목록: 탭하면 한 장으로 펼친다.
+    if (this.screen === 'monitor-group') {
+      if (gesture === 'doubleTap') {
+        this.screen = 'monitor';
+        await this.render();
+        return;
+      }
+      if (this.moveCursor(gesture, selectedIndex, 'monItemCursor', this.monGroup()?.items.length ?? 0)) return;
+      const picked = this.monGroup()?.items[this.monItemCursor];
+      if (gesture === 'tap' && picked) {
+        this.monItemId = picked.id;
+        this.screen = 'monitor-item';
+        await this.render();
+      }
+      return;
+    }
+
+    // 대상 한 장: 탭은 다시 읽기, 위·아래는 같은 그룹의 이전·다음 대상.
+    if (this.screen === 'monitor-item') {
+      if (gesture === 'doubleTap') {
+        this.screen = 'monitor-group';
+        await this.render();
+        return;
+      }
+      if (gesture === 'tap') {
+        await this.refreshMonitor();
+        return;
+      }
+      const count = this.monGroup()?.items.length ?? 0;
+      if (count > 1 && (gesture === 'up' || gesture === 'down')) {
+        this.monItemCursor = (this.monItemCursor + (gesture === 'down' ? 1 : count - 1)) % count;
+        this.monItemId = this.monGroup()?.items[this.monItemCursor]?.id ?? '';
+        await this.render();
+      }
       return;
     }
 

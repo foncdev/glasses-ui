@@ -14,7 +14,7 @@ test('메뉴 규칙: 모르는·겹친 id는 빼고, 빠진 것은 기본 순서
   assert.deepEqual(
     normalizeMenu({ order: ['settings', 'x', 'mac', 'mac', 'sessions'], hidden: ['settings', 'mac', 'nope'] }),
     {
-      order: ['settings', 'mac', 'sessions', 'phone', 'notifications', 'checklist', 'system', 'commands'],
+      order: ['settings', 'mac', 'sessions', 'phone', 'notifications', 'checklist', 'system', 'monitor', 'commands'],
       hidden: ['mac', 'commands'],
     },
     '빠진 명령은 기본처럼 숨긴다',
@@ -23,9 +23,10 @@ test('메뉴 규칙: 모르는·겹친 id는 빼고, 빠진 것은 기본 순서
   assert.deepEqual(normalizeMenu({ order: ['sessions'], hidden: ['system'] }).hidden, ['commands'], '빠졌던 id는 기본값이 정한다');
 });
 
-test('컴퓨터는 연결됐을 때만, 숨긴 것은 빼고 보인다', () => {
+test('컴퓨터는 연결됐을 때만, 모니터링은 설정이 있을 때만, 숨긴 것은 빼고 보인다', () => {
   assert.deepEqual(visibleMenu(DEFAULT_MENU, false), ['sessions', 'phone', 'notifications', 'checklist', 'system', 'settings']);
   assert.deepEqual(visibleMenu(DEFAULT_MENU, true), ['sessions', 'phone', 'notifications', 'checklist', 'system', 'mac', 'settings']);
+  assert.deepEqual(visibleMenu(DEFAULT_MENU, true, true), ['sessions', 'phone', 'notifications', 'checklist', 'system', 'monitor', 'mac', 'settings']);
 });
 
 test('옮기기는 끝에서 멈추고, 설정은 숨기기를 바꾸지 않는다', () => {
@@ -158,12 +159,12 @@ test('설정 > 메뉴 편집: 명령을 보이게 하고 시스템을 위로 옮
     await h.fire('tap', settings.indexOf('메뉴 편집'));
     assert.equal(h.ui.screen, 'menu-edit');
     assert.deepEqual(h.lists.at(-1)!.items, [
-      '[x] 에이전트', '[x] 타이머 · 물', '[x] 알림 보기', '[x] 체크 보기', '[x] 시스템', '[x] 컴퓨터 · 연결 시', '[x] 설정', '[ ] 명령',
+      '[x] 에이전트', '[x] 타이머 · 물', '[x] 알림 보기', '[x] 체크 보기', '[x] 시스템', '[x] 모니터링 · 설정 시', '[x] 컴퓨터 · 연결 시', '[x] 설정', '[ ] 명령',
       '기본값으로',
     ]);
 
     // 명령 보이기
-    await h.fire('tap', 7);
+    await h.fire('tap', 8);
     assert.equal(h.ui.screen, 'menu-item');
     assert.deepEqual(h.lists.at(-1)!.items, ['보이기', '위로', '아래로', '완료']);
     await h.fire('tap', 0);
@@ -175,11 +176,11 @@ test('설정 > 메뉴 편집: 명령을 보이게 하고 시스템을 위로 옮
     await h.fire('tap', 4);
     await h.fire('tap', 1);
     await h.fire('tap', 1);
-    assert.match(h.lists.at(-1)!.header, /^시스템 3\/8/);
+    assert.match(h.lists.at(-1)!.header, /^시스템 3\/9/);
     await h.fire('tap', 3); // 완료
 
     assert.deepEqual(JSON.parse(h.store['home.menu']!), {
-      order: ['sessions', 'phone', 'system', 'notifications', 'checklist', 'mac', 'settings', 'commands'],
+      order: ['sessions', 'phone', 'system', 'notifications', 'checklist', 'monitor', 'mac', 'settings', 'commands'],
       hidden: [],
     });
     assert.deepEqual(h.sent.at(-1), JSON.parse(h.store['home.menu']!), '폰에도 맞춘다');

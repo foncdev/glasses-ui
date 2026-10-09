@@ -7,6 +7,7 @@
  */
 
 import type { PhoneStatus, PhoneTimerAction } from './phone.js';
+import type { MonitorSnapshot } from './monitor.js';
 import { msg } from './i18n.js';
 
 import type { ExtAgent } from './mac.js';
@@ -421,6 +422,18 @@ export class AgentCliClient {
     return this.request<SysSummary>('/sys/summary');
   }
 
+  // --- 모니터링 (Grafana) ---
+
+  /** 그룹 → 대상 → 지표·서비스. 옛 relay(경로 없음)면 꺼진 것으로 본다. */
+  async getMonitor(): Promise<MonitorSnapshot> {
+    return this.request<MonitorSnapshot>('/monitor');
+  }
+
+  /** relay가 지금 다시 읽게 하고 그 결과를 받는다. */
+  async refreshMonitor(): Promise<MonitorSnapshot> {
+    return this.request<MonitorSnapshot>('/monitor/refresh', { method: 'POST' });
+  }
+
   async sysProcs(n = 8): Promise<SysProc[]> {
     const { procs } = await this.request<{ procs: SysProc[] }>(`/sys/procs?n=${n}`);
     return procs;
@@ -660,7 +673,7 @@ export class AgentCliClient {
    * 그때는 부르는 쪽의 주기 갱신이 대신 메운다.
    */
   streamEvents(
-    onChange: (topic: 'checklist' | 'notifications') => void,
+    onChange: (topic: 'checklist' | 'notifications' | 'monitor') => void,
     onDown?: (down: boolean) => void,
   ): () => void {
     const url = `${this.baseUrl}/events${
@@ -679,7 +692,7 @@ export class AgentCliClient {
         onDown?.(false);
         try {
           const { topic } = JSON.parse((e as MessageEvent).data) as { topic: string };
-          if (topic === 'checklist' || topic === 'notifications') onChange(topic);
+          if (topic === 'checklist' || topic === 'notifications' || topic === 'monitor') onChange(topic);
         } catch {
           // 하나가 깨져도 스트림은 이어간다.
         }

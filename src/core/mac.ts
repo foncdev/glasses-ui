@@ -213,7 +213,29 @@ function elapsedMinutes(startedAt: string | undefined, now: number): number | un
   return Number.isNaN(t) ? undefined : Math.max(0, Math.floor((now - t) / 60_000));
 }
 
-export function presentPage(state: PresentState | undefined, error: string | undefined, now: number): string {
+/** 발표 중 아래 줄 단추. 위아래로 고르고 탭으로 실행한다. */
+export const PRESENT_ACTIONS = ['prev', 'next', 'stop'] as const;
+export type PresentAction = (typeof PRESENT_ACTIONS)[number];
+
+/** 발표 단추 고르기 상태. stopArmed면 끄기를 한 번 더 눌러야 실행한다(실수로 끄지 않게). */
+export interface PresentControls {
+  cursor: number;
+  stopArmed: boolean;
+}
+
+/** 단추 줄. 고른 단추는 [▶ ]로 감싼다. */
+function presentActionsRow(cursor: number): string {
+  const m = msg();
+  const labels = [m.presentPrevAction, m.presentNextAction, m.presentStopAction];
+  return '  ' + labels.map((label, i) => (i === cursor ? `[▶${label}]` : ` ${label} `)).join('   ');
+}
+
+export function presentPage(
+  state: PresentState | undefined,
+  error: string | undefined,
+  now: number,
+  controls: PresentControls = { cursor: 1, stopArmed: false },
+): string {
   const m = msg();
   if (!state) return page(m.macPresent, [error ?? m.reading], m.hintBack);
   if (state.status === 'none') return page(m.macPresent, [m.presentNone, ' ', m.macFixOnMac], m.hintBack);
@@ -229,14 +251,18 @@ export function presentPage(state: PresentState | undefined, error: string | und
     .filter(Boolean)
     .join(' · ');
 
-  // 노트가 주인공이다. 다음 쪽 노트는 한 줄만 미리 보인다.
+  // 노트가 주인공이다. 다음 쪽 노트는 한 줄만 미리 보인다. 발표 중이면 맨 아래에 단추 줄을 둔다.
   const next = state.nextNotes ? `${m.presentNext}: ${state.nextNotes.split('\n')[0]}` : '';
-  const notesRows = MAC_ROWS - 2 - (next ? 2 : 0) - (error ? 1 : 0);
+  const notesRows = MAC_ROWS - 2 - (next ? 2 : 0) - (error ? 1 : 0) - (playing ? 1 : 0);
   const notes = state.notes ? wrapLines(state.notes, MAC_COLS, notesRows) : [m.presentNoNotes];
   const body = [...notes];
   if (next) body.push(' ', clip(next, MAC_COLS));
   if (error) body.unshift(clip(error, MAC_COLS));
-  return page(head, body, playing ? m.presentHint : m.presentStartHint);
+  if (!playing) return page(head, body, m.presentStartHint);
+  // 단추 줄은 늘 힌트 바로 위다. 노트가 짧으면 빈 줄로 채워 자리를 고정한다.
+  while (body.length < MAC_ROWS - 3) body.push(' ');
+  body.push(presentActionsRow(controls.cursor));
+  return page(head, body, controls.stopArmed ? m.presentStopConfirm : m.presentHint);
 }
 
 /**

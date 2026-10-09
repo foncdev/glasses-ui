@@ -63,6 +63,7 @@ import {
   messageSender,
   quickReplies,
   presentPage,
+  PRESENT_ACTIONS,
   prompterPage,
   reasonText,
   shortcutPage,
@@ -629,6 +630,10 @@ export class GlassesUI {
   private macTick?: ReturnType<typeof setInterval>;
   private macError?: string;
   private macPresent?: PresentState;
+  /** 발표 단추 줄에서 고른 것(PRESENT_ACTIONS 순서). 처음엔 '다음'이다. */
+  private presentCursor = 1;
+  /** '끄기'를 한 번 눌러 확인을 기다리는 중인지. */
+  private presentStopArmed = false;
   private macCaptionLines: CaptionLine[] = [];
   private macPartial?: CaptionLine;
   private macCaptionsState?: CaptionsState;
@@ -1778,7 +1783,12 @@ export class GlassesUI {
         return;
       }
       if (this.screen === 'mac-present') {
-        await this.glasses.showText(presentPage(this.macPresent, this.macError, Date.now()));
+        await this.glasses.showText(
+          presentPage(this.macPresent, this.macError, Date.now(), {
+            cursor: this.presentCursor,
+            stopArmed: this.presentStopArmed,
+          }),
+        );
         return;
       }
       if (this.screen === 'mac-captions') {
@@ -2492,6 +2502,8 @@ export class GlassesUI {
   private async openPresent(): Promise<void> {
     this.screen = 'mac-present';
     this.macPresent = undefined;
+    this.presentCursor = 1;
+    this.presentStopArmed = false;
     this.armIdle(); // 발표 화면에서는 타이머를 걷는다.
     await this.render();
     const load = async (): Promise<void> => {
@@ -2511,6 +2523,8 @@ export class GlassesUI {
         if (type === 'state') {
           this.macPresent = data as PresentState;
           this.macError = undefined;
+          // 맥에서 발표를 끝냈으면 끄기 확인을 거둔다.
+          if (this.macPresent.status !== 'playing') this.presentStopArmed = false;
         } else {
           this.macError = errorText((data as { error?: unknown }).error);
         }
@@ -2525,10 +2539,11 @@ export class GlassesUI {
     (this.macTick as { unref?: () => void }).unref?.();
   }
 
-  private async presentCommand(command: 'next' | 'prev' | 'start'): Promise<void> {
+  private async presentCommand(command: 'next' | 'prev' | 'start' | 'stop'): Promise<void> {
     try {
       this.macPresent = await agentCli.mac<PresentState>(`/present/${command}`, {});
       this.macError = undefined;
+      if (command === 'stop') this.presentCursor = 1;
     } catch (err) {
       this.macError = errorText(err);
     }
@@ -3002,12 +3017,40 @@ export class GlassesUI {
       return;
     }
 
-    // 발표: 탭은 다음 쪽(발표 전이면 시작), 위·아래는 이전·다음 쪽.
+    // 발표: 발표 중이면 아래 단추 줄(이전·다음·끄기)을 위아래로 고르고 탭으로 실행한다.
+    // 고른 자리가 남아 '다음'에 두면 탭만으로 계속 넘긴다. 끄기는 한 번 더 탭해야 실행한다.
+    // 발표 전이면 탭은 시작, 위아래는 이전·다음 쪽이다.
     if (this.screen === 'mac-present') {
-      if (gesture === 'doubleTap') return this.backToMac();
-      if (gesture === 'up') return this.presentCommand('prev');
-      if (gesture === 'down') return this.presentCommand('next');
-      if (gesture === 'tap') return this.presentCommand(this.macPresent?.status === 'playing' ? 'next' : 'start');
+      const playing = this.macPresent?.status === 'playing';
+      if (gesture === 'doubleTap') {
+        if (this.presentStopArmed) {
+          this.presentStopArmed = false;
+          return this.render();
+        }
+        return this.backToMac();
+      }
+      if (!playing) {
+        if (gesture === 'up') return this.presentCommand('prev');
+        if (gesture === 'down') return this.presentCommand('next');
+        if (gesture === 'tap') return this.presentCommand('start');
+        return;
+      }
+      if (gesture === 'up' || gesture === 'down') {
+        const step = gesture === 'up' ? -1 : 1;
+        this.presentCursor = Math.min(Math.max(this.presentCursor + step, 0), PRESENT_ACTIONS.length - 1);
+        this.presentStopArmed = false;
+        return this.render();
+      }
+      if (gesture === 'tap') {
+        const action = PRESENT_ACTIONS[this.presentCursor];
+        if (action !== 'stop') return this.presentCommand(action);
+        if (!this.presentStopArmed) {
+          this.presentStopArmed = true;
+          return this.render();
+        }
+        this.presentStopArmed = false;
+        return this.presentCommand('stop');
+      }
       return;
     }
 

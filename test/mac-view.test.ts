@@ -53,7 +53,18 @@ test('발표 화면: 머리에 상태·쪽·경과, 노트, 다음 쪽 한 줄, 
   assert.equal(page[0], '발표 중 · 3 / 12쪽 · 4분');
   assert.deepEqual(page.slice(1, 3), ['첫 요점', '둘째 요점']);
   assert.ok(page.includes('다음: 다음 쪽 노트 첫 줄'));
+  assert.equal(page.at(-2), '   이전    [▶다음]    끄기 ');
   assert.equal(page.at(-1), msg().presentHint);
+  assert.equal(page.length, 10, '단추 줄은 늘 맨 아래 자리다');
+});
+
+test('발표 단추 줄: 고른 단추를 표시하고, 끄기 확인 중이면 안내가 바뀐다', () => {
+  const state: PresentState = { status: 'playing', slide: 1, total: 3, notes: '노트' };
+  const prev = presentPage(state, undefined, NOW, { cursor: 0, stopArmed: false }).split('\n');
+  assert.equal(prev.at(-2), '  [▶이전]    다음     끄기 ');
+  const armed = presentPage(state, undefined, NOW, { cursor: 2, stopArmed: true }).split('\n');
+  assert.equal(armed.at(-2), '   이전     다음    [▶끄기]');
+  assert.equal(armed.at(-1), msg().presentStopConfirm);
 });
 
 test('발표 화면은 어떤 노트든 10줄·화면 폭 안이다', () => {
@@ -61,6 +72,7 @@ test('발표 화면은 어떤 노트든 10줄·화면 폭 안이다', () => {
     setLocale(locale);
     try {
       fitsScreen(presentPage({ status: 'playing', slide: 1, total: 99, notes: longNotes, nextNotes: longNotes, startedAt: new Date(NOW).toISOString() }, '오류가 났습니다 '.repeat(10), NOW));
+      fitsScreen(presentPage({ status: 'playing', slide: 1, total: 2 }, undefined, NOW, { cursor: 2, stopArmed: true }));
       fitsScreen(presentPage({ status: 'ready', slide: 1, total: 2 }, undefined, NOW));
       fitsScreen(presentPage({ status: 'none' }, undefined, NOW));
       fitsScreen(presentPage(undefined, undefined, NOW));
@@ -243,7 +255,7 @@ async function harness(responses: Record<string, unknown>, caps = [
 
 const playing = (slide: number): PresentState => ({ status: 'playing', slide, total: 10, notes: `${slide}쪽 노트`, startedAt: new Date().toISOString() });
 
-test('맥 메뉴 → 발표: 탭·아래는 다음, 위는 이전. 이벤트로 바뀐 쪽이 그대로 그려진다', async () => {
+test('맥 메뉴 → 발표: 탭은 고른 단추(처음엔 다음), 위로 이전을 고르면 탭이 이전. 이벤트로 바뀐 쪽이 그대로 그려진다', async () => {
   let slide = 3;
   const h = await harness({
     '/present/state': () => playing(slide),
@@ -260,11 +272,17 @@ test('맥 메뉴 → 발표: 탭·아래는 다음, 위는 이전. 이벤트로 
     assert.equal(h.streams.at(-1)!.path, '/present/stream');
 
     await h.fire('tap');
-    await h.fire('down');
+    await h.fire('tap');
     assert.match(h.texts.at(-1)!, /5 \/ 10쪽/);
+    // 위아래는 단추만 고르고 명령은 보내지 않는다.
     await h.fire('up');
+    assert.match(h.texts.at(-1)!, /\[▶이전\]/);
+    await h.fire('tap');
     assert.match(h.texts.at(-1)!, /4 \/ 10쪽/);
-    assert.deepEqual(h.calls.filter((c) => c.path !== '/present/state').map((c) => c.path), ['/present/next', '/present/next', '/present/prev']);
+    await h.fire('tap');
+    assert.match(h.texts.at(-1)!, /3 \/ 10쪽/, '고른 자리가 남아 탭만으로 계속 이전');
+    assert.deepEqual(h.calls.filter((c) => c.path !== '/present/state').map((c) => c.path),
+      ['/present/next', '/present/next', '/present/prev', '/present/prev']);
 
     // 맥에서 직접 넘겨도 스트림으로 따라온다.
     h.streams.at(-1)!.push('state', playing(9));
@@ -287,6 +305,39 @@ test('발표 화면에서는 무조작으로 꺼지지 않고, 나가면 다시 
     assert.equal(h.r.screen, 'mac');
     assert.ok(h.r.idleTimer, '맥 메뉴로 나오면 다시 건다');
     assert.equal(h.streams[0].closed, true);
+  } finally {
+    h.restore();
+  }
+});
+
+test('발표 끄기: 끄기를 고르고 두 번 탭해야 끈다. 확인 중 두 번 탭은 취소다', async () => {
+  let status = 'playing';
+  const h = await harness({
+    '/present/state': () => (status === 'playing' ? playing(2) : { status: 'ready', slide: 2, total: 10 }),
+    '/present/stop': () => {
+      status = 'ready';
+      return { status: 'ready', slide: 2, total: 10 };
+    },
+  });
+  try {
+    await h.r.openMenu('mac');
+    await h.fire('tap', 0);
+    await h.fire('down');
+    assert.match(h.texts.at(-1)!, /\[▶끄기\]/);
+
+    await h.fire('tap');
+    assert.ok(h.texts.at(-1)!.endsWith(msg().presentStopConfirm), '첫 탭은 확인만 묻는다');
+    assert.ok(!h.calls.some((c) => c.path === '/present/stop'));
+
+    await h.fire('doubleTap');
+    assert.equal(h.r.screen, 'mac-present', '확인 중 두 번 탭은 나가지 않고 취소한다');
+    assert.ok(h.texts.at(-1)!.endsWith(msg().presentHint));
+
+    await h.fire('tap');
+    await h.fire('tap');
+    assert.equal(h.calls.at(-1)!.path, '/present/stop');
+    assert.match(h.texts.at(-1)!, /대기/);
+    assert.ok(h.texts.at(-1)!.endsWith(msg().presentStartHint));
   } finally {
     h.restore();
   }

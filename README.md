@@ -52,7 +52,7 @@ await ui.start();
 
 ```
 home ─ 상단 요약 + 메뉴
-  ├ 에이전트  sessions → history → detail
+  ├ 에이전트  sessions → history → detail → slash(Claude 명령, 맨 끝에 할 일)
   ├ 알림 보기 notifications → notification
   ├ 체크 보기 checklist
   ├ 시스템    system
@@ -61,6 +61,17 @@ home ─ 상단 요약 + 메뉴
   ├ 타이머·물 phone
   └ 설정      settings
 ```
+
+### Claude 명령
+
+대화 화면에서 탭하면 그 세션에 보낼 `/` 명령 목록이 뜬다. 골라 탭하면 `/compact`처럼 그대로 보내고,
+결과는 대화 화면에 뜬다. 맨 끝 칸은 할 일 목록이다.
+
+- 목록은 세션의 CLI가 시작할 때 알려 준 것(`slashCommands`, agent-cli가 넘긴다)이다. 첫 입력 전에는
+  아직 없어서 자주 쓰는 명령(compact·context·usage·clear·code-review·simplify·init)만 보인다.
+- 값을 적어야 하는 명령(model·effort·rename·loop …), 터미널 화면에서만 뜻이 있는 명령(config·mcp·agents …),
+  따로 과금되는 명령(ultrareview·extra-usage)은 뺀다. 규칙은 `src/core/slash.ts`.
+- `/clear`는 대화가 지워지므로 한 번 더 탭해야 보낸다. 다른 칸으로 옮기면 풀린다.
 
 ### 맥
 

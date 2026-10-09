@@ -25,6 +25,8 @@ export interface SessionInfo {
   totalCostUsd: number;
   lastActivityAt: string;
   pending: Array<{ id: string; toolName: string; summary: string }>;
+  /** 이 세션에서 쓸 수 있는 / 명령(/ 없이). CLI가 첫 입력 뒤에 알려 준다. 옛 agent-cli면 없다. */
+  slashCommands?: string[];
   live: boolean;
 }
 

@@ -54,6 +54,7 @@ import {
   type PhoneStatus,
 } from './phone.js';
 import { msg } from './i18n.js';
+import { slashItems, type SlashItem } from './slash.js';
 import {
   DEFAULT_MENU,
   menuLabel,
@@ -109,6 +110,7 @@ type Screen =
   | 'sessions'
   | 'history'
   | 'detail'
+  | 'slash'
   | 'notifications'
   | 'notification'
   | 'checklist'
@@ -654,6 +656,10 @@ export class GlassesUI {
   /** 등록해 둔 명령. 안경에서는 골라 실행만 한다. */
   private snippets: Snippet[] = [];
   private cmdCursor = 0;
+  /** Claude 명령 화면의 커서. 맨 끝 한 칸은 '할 일 보기'다. */
+  private slashCursor = 0;
+  /** 한 번 더 탭해야 보내는 명령(/clear). 커서를 옮기면 풀린다. */
+  private slashConfirm = '';
 
   // --- 맥(mac-agent) ---
   /** 기능 목록. undefined: 읽는 중, null: 맥이 붙어 있지 않음. */
@@ -1544,6 +1550,12 @@ export class GlassesUI {
     return this.historyItems().slice(-LIST_ROWS);
   }
 
+  /** 대화 화면에서 고를 Claude 명령. 맨 끝 한 칸('할 일 보기')을 남긴다. */
+  private shownSlash(): SlashItem[] {
+    const s = this.sessions.find((x) => x.id === this.activeId);
+    return slashItems(s?.slashCommands, LIST_ROWS);
+  }
+
   private shownSnippets(): Snippet[] {
     return this.snippets.slice(0, LIST_MAX);
   }
@@ -1855,6 +1867,22 @@ export class GlassesUI {
       }
 
       // 9) 등록한 명령 목록.
+      if (this.screen === 'slash') {
+        const m = msg();
+        const items = this.shownSlash();
+        const header = this.slashConfirm
+          ? m.slashConfirm(this.slashConfirm)
+          : m.withBack(m.slashHeader(this.slashCursor + 1, items.length + 1));
+        await this.glasses.showList(header, [
+          ...items.map((c, i) => {
+            const desc = c.key ? m.slashDesc(c.key) : '';
+            return { text: clamp(`/${c.name}${desc ? `  ${desc}` : ''}`, 40), state: i === this.slashCursor ? ('running' as const) : undefined };
+          }),
+          { text: m.slashTodo, state: this.slashCursor === items.length ? ('running' as const) : undefined },
+        ]);
+        return;
+      }
+
       if (this.screen === 'commands') {
         if (this.glasses.showCommands) {
           await this.glasses.showCommands(this.commandsView());
@@ -2140,6 +2168,11 @@ export class GlassesUI {
 
   /** 상세 화면에서 보고 있는 세션의 이벤트. */
   private async handleEvent(e: SessionEvent): Promise<void> {
+    // CLI가 시작하며 알려 준 / 명령 목록. 세션 목록을 다시 읽기 전에도 명령 화면에 쓴다.
+    if (e.type === 'session' && Array.isArray(e.slashCommands)) {
+      const s = this.sessions.find((x) => x.id === (e.sessionId ?? this.activeId));
+      if (s) s.slashCommands = e.slashCommands as string[];
+    }
     if (e.type === 'status') {
       this.status = String(e.status);
       this.setSpinning(this.status === 'busy' && this.screen === 'detail');
@@ -2338,6 +2371,7 @@ export class GlassesUI {
       | 'histCursor'
       | 'checkCursor'
       | 'cmdCursor'
+      | 'slashCursor'
       | 'phoneCursor'
       | 'homeMenuCursor'
       | 'macCursor'
@@ -3620,6 +3654,42 @@ export class GlassesUI {
       return;
     }
 
+    // Claude 명령: 골라 탭하면 그 세션에 보낸다. 맨 끝 칸은 할 일 목록.
+    if (this.screen === 'slash') {
+      if (gesture === 'doubleTap') {
+        this.slashConfirm = '';
+        this.screen = 'detail';
+        await this.render();
+        return;
+      }
+      const items = this.shownSlash();
+      const before = this.slashCursor;
+      if (this.moveCursor(gesture, selectedIndex, 'slashCursor', items.length + 1)) {
+        this.slashConfirm = '';
+        await this.render();
+        return;
+      }
+      if (this.slashCursor !== before) this.slashConfirm = '';
+      if (gesture !== 'tap') return;
+      const picked = items[this.slashCursor];
+      if (!picked) return this.openChecklist();
+      if (picked.confirm && this.slashConfirm !== picked.name) {
+        this.slashConfirm = picked.name;
+        await this.render();
+        return;
+      }
+      this.slashConfirm = '';
+      try {
+        await this.send(`/${picked.name}`);
+        this.log(msg().slashSent(picked.name), 'ok');
+      } catch (err) {
+        this.log(msg().slashFailed((err as Error).message), 'error');
+        this.screen = 'detail';
+        await this.render();
+      }
+      return;
+    }
+
     // 상세(대화) 화면. 한 단계 위는 대화 목록이다.
     if (gesture === 'doubleTap') {
       await this.backToHistory();
@@ -3628,11 +3698,14 @@ export class GlassesUI {
 
     if (gesture === 'tap') {
       const s = this.sessions.find((x) => x.id === this.activeId);
-      // 종료된 세션은 이어가기, 살아있으면 할 일 목록으로 간다.
+      // 종료된 세션은 이어가기, 살아있으면 Claude 명령(맨 끝에 할 일)으로 간다.
       if (s && !s.live) {
         await this.resume(s.id);
       } else {
-        await this.openChecklist();
+        this.slashCursor = 0;
+        this.slashConfirm = '';
+        this.screen = 'slash';
+        await this.render();
       }
     }
   }

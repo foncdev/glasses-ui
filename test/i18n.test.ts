@@ -369,7 +369,7 @@ test('아래 안내 줄: 안내와 오른쪽 글이 함께 들어간다', async 
       [m.hintRefreshBack, 'macbook-pro'],
       [m.hintFullBack, ''],
       [m.hintResumeBack, `${m.turns(120)}  ·  $12.34`],
-      [m.hintTodoBack, `${m.turns(120)}  ·  $12.34`],
+      [m.hintCommandsBack, `${m.turns(120)}  ·  $12.34`],
       [m.hintBack, ''],
     ];
     for (const [left, right] of cases) {
@@ -494,8 +494,8 @@ test('권한 요청·팝업·진행 카드·실행 결과 글이 칸에 들어�
     assert.ok(fitsLine(m.closeHint(10), SCREEN_W - 16), `[${l}] ${m.closeHint(10)}`);
 
     const live = layoutLive({
-      title: '$ ~/x', status: '', lines: [], hint: m.hintTodoBack, meta: '',
-      idle: m.stateTapTodo(m.stateWaiting),
+      title: '$ ~/x', status: '', lines: [], hint: m.hintCommandsBack, meta: '',
+      idle: m.stateTapCommands(m.stateWaiting),
     });
     assert.ok(fitsLine(live.activity.text, SCREEN_W - 12 - 2 * (3 + 1) - 6), `[${l}] ${live.activity.text}`);
     assert.ok(fitsLine(`○  ${m.endedTapResume}`, SCREEN_W - 12 - 2 * (3 + 1) - 6));

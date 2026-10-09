@@ -92,7 +92,10 @@ import {
   type PresentFile,
   type PresentState,
   type PrompterState,
+  MAC_COLS,
+  MAC_ROWS,
 } from './mac.js';
+import { paginate, padWidth, parseUsage, plainText, shortReset, usageBar } from './reader.js';
 
 /**
  * 화면 구성.
@@ -111,6 +114,7 @@ type Screen =
   | 'history'
   | 'detail'
   | 'slash'
+  | 'reader'
   | 'notifications'
   | 'notification'
   | 'checklist'
@@ -660,6 +664,10 @@ export class GlassesUI {
   private slashCursor = 0;
   /** 한 번 더 탭해야 보내는 명령(/clear). 커서를 옮기면 풀린다. */
   private slashConfirm = '';
+  /** 보고 있는 세션의 마지막 답 전문. 대화 화면은 첫 줄만 보이므로 결과 읽기에서 끝까지 넘긴다. */
+  private lastReply = '';
+  /** 결과 읽기: 머리글과 쪽들, 지금 쪽 */
+  private reader: { title: string; pages: string[][]; page: number } | null = null;
 
   // --- 맥(mac-agent) ---
   /** 기능 목록. undefined: 읽는 중, null: 맥이 붙어 있지 않음. */
@@ -1495,8 +1503,8 @@ export class GlassesUI {
             tick: this.tick,
           }
         : undefined,
-      idle: closed ? m.endedTapResume : m.stateTapTodo(this.sessionStateLabel(s)),
-      hint: closed ? m.hintResumeBack : m.hintTodoBack,
+      idle: closed ? m.endedTapResume : m.stateTapCommands(this.sessionStateLabel(s)),
+      hint: closed ? m.hintResumeBack : m.hintCommandsBack,
       meta: s ? `${m.turns(s.turns)}  ·  $${s.totalCostUsd.toFixed(2)}` : '',
     };
   }
@@ -1867,6 +1875,18 @@ export class GlassesUI {
       }
 
       // 9) 등록한 명령 목록.
+      if (this.screen === 'reader' && this.reader) {
+        const m = msg();
+        const r = this.reader;
+        const body = r.pages[r.page] ?? [];
+        const head = r.pages.length > 1 ? `${r.title}  ${r.page + 1}/${r.pages.length}` : r.title;
+        // 펌웨어가 빈 줄 앞 공백을 지운다. 빈 줄은 공백 하나로 둔다.
+        await this.glasses.showText(
+          [clampWidth(head, MAC_COLS), ...body.map((l) => l || ' '), ...Array(Math.max(0, MAC_ROWS - 2 - body.length)).fill(' '), m.readerHint].join('\n'),
+        );
+        return;
+      }
+
       if (this.screen === 'slash') {
         const m = msg();
         const items = this.shownSlash();
@@ -2126,6 +2146,42 @@ export class GlassesUI {
     }
   }
 
+  /**
+   * 마지막 답을 모은다. 새 질문이 오면 비우고, 답 조각을 잇고, 턴이 끝나면 CLI가 준 결과 전문으로 바꾼다.
+   * 대화 화면은 첫 줄만 보이므로 결과 읽기가 이걸 쓴다.
+   */
+  private collectReply(e: SessionEvent): void {
+    if (e.type === 'user') this.lastReply = '';
+    else if (e.type === 'assistant' && e.text) this.lastReply = [this.lastReply, String(e.text)].filter(Boolean).join('\n\n');
+    else if (e.type === 'turn_complete' && String(e.result ?? '').trim()) this.lastReply = String(e.result);
+  }
+
+  /** 마지막 답을 쪽으로 나눠 연다. /usage 결과면 한도 카드를 첫 쪽에 둔다. */
+  private async openReader(): Promise<void> {
+    const m = msg();
+    const rows = MAC_ROWS - 2;
+    const usage = parseUsage(this.lastReply);
+    let title = m.readerTitle;
+    let pages: string[][];
+    if (usage) {
+      title = m.usageTitle(usage.subscription);
+      const name = (k: (typeof usage.limits)[number]): string =>
+        k.kind === 'session' ? m.usageSession : k.kind === 'week' ? m.usageWeek : k.label;
+      const width = Math.max(...usage.limits.map((k) => displayWidth(name(k)))) + 2;
+      const card = usage.limits.map(
+        (k) => `${padWidth(name(k), width)}${usageBar(k.percent, 14)} ${String(Math.round(k.percent)).padStart(3)}%  ${shortReset(k.resets, new Date())}`,
+      );
+      const details = usage.details ? paginate(plainText(usage.details), MAC_COLS, rows) : [];
+      if (details.length > 0) card.push('', m.usageMore);
+      pages = [card, ...details];
+    } else {
+      pages = paginate(plainText(this.lastReply) || m.readerEmpty, MAC_COLS, rows);
+    }
+    this.reader = { title, pages, page: 0 };
+    this.screen = 'reader';
+    await this.render();
+  }
+
   /** 이벤트 한 건을 화면에 보여줄 짧은 줄로 바꾼다. */
   private toLine(e: SessionEvent): string | null {
     const text = (k: string): string => String(e[k] ?? '');
@@ -2168,6 +2224,7 @@ export class GlassesUI {
 
   /** 상세 화면에서 보고 있는 세션의 이벤트. */
   private async handleEvent(e: SessionEvent): Promise<void> {
+    this.collectReply(e);
     // CLI가 시작하며 알려 준 / 명령 목록. 세션 목록을 다시 읽기 전에도 명령 화면에 쓴다.
     if (e.type === 'session' && Array.isArray(e.slashCommands)) {
       const s = this.sessions.find((x) => x.id === (e.sessionId ?? this.activeId));
@@ -3654,6 +3711,28 @@ export class GlassesUI {
       return;
     }
 
+    // 결과 읽기: 위·아래로 쪽을 넘긴다. 마지막 쪽에서 탭하면 대화 화면으로.
+    if (this.screen === 'reader') {
+      const r = this.reader;
+      if (!r || gesture === 'doubleTap') {
+        this.reader = null;
+        this.screen = 'detail';
+        await this.render();
+        return;
+      }
+      if (gesture === 'up') {
+        if (r.page > 0) r.page -= 1;
+      } else if (gesture === 'down' || gesture === 'tap') {
+        if (r.page < r.pages.length - 1) r.page += 1;
+        else if (gesture === 'tap') {
+          this.reader = null;
+          this.screen = 'detail';
+        }
+      }
+      await this.render();
+      return;
+    }
+
     // Claude 명령: 골라 탭하면 그 세션에 보낸다. 맨 끝 칸은 할 일 목록.
     if (this.screen === 'slash') {
       if (gesture === 'doubleTap') {
@@ -3693,6 +3772,12 @@ export class GlassesUI {
     // 상세(대화) 화면. 한 단계 위는 대화 목록이다.
     if (gesture === 'doubleTap') {
       await this.backToHistory();
+      return;
+    }
+
+    // 위·아래는 마지막 답을 끝까지 읽는다. 대화 화면은 첫 줄만 보인다.
+    if (gesture === 'up' || gesture === 'down') {
+      await this.openReader();
       return;
     }
 
@@ -3827,8 +3912,10 @@ export class GlassesUI {
     this.notice = null;
 
     const s = this.sessions.find((x) => x.id === id);
+    this.lastReply = '';
     try {
       for (const e of await agentCli.getHistory(id, 40)) {
+        this.collectReply(e);
         const line = this.toLine(e);
         if (line) this.lines.push(line);
         const fed = this.toFeed(e);

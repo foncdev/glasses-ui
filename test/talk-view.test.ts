@@ -68,8 +68,8 @@ const LIVE: LiveView = {
     { kind: 'tool', text: 'Bash  git status --porcelain --untracked-files=all --ignored' },
   ],
   activity: { text: 'Bash  git commit -F -', elapsed: '12초', tick: 0 },
-  idle: '대기  ·  탭하면 할 일',
-  hint: '● 할 일    ●● 뒤로',
+  idle: '대기  ·  탭 명령  ▲▼ 결과',
+  hint: '● 명령  ▲▼ 결과  ●● 뒤로',
   meta: '턴 12  ·  $0.42',
 };
 

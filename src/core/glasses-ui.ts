@@ -96,7 +96,7 @@ import {
   MAC_ROWS,
 } from './mac.js';
 import { paginate, padWidth, parseUsage, plainText, shortReset, usageBar } from './reader.js';
-import { groupRows, homeMeta, itemPage, itemRows, monitorHeader, type MonitorSnapshot } from './monitor.js';
+import { groupRows, groupView, groupsView, homeMeta, itemPage, itemRows, itemView, monitorHeader, type MonitorSnapshot } from './monitor.js';
 
 /**
  * 화면 구성.
@@ -1889,6 +1889,10 @@ export class GlassesUI {
 
       // 모니터링: 그룹 → 대상 → 대상 한 장.
       if (this.screen === 'monitor') {
+        if (this.glasses.showMonitor) {
+          await this.glasses.showMonitor(groupsView(this.monitor));
+          return;
+        }
         const m = msg();
         const snap = this.monitor;
         const rows = snap && snap.groups.length > 0 ? groupRows(snap) : [this.monitorEmptyRow()];
@@ -1896,6 +1900,10 @@ export class GlassesUI {
         return;
       }
       if (this.screen === 'monitor-group') {
+        if (this.glasses.showMonitor) {
+          await this.glasses.showMonitor(groupView(this.monitor, this.monGroup()));
+          return;
+        }
         const m = msg();
         const g = this.monGroup();
         await this.glasses.showList(
@@ -1905,6 +1913,10 @@ export class GlassesUI {
         return;
       }
       if (this.screen === 'monitor-item') {
+        if (this.glasses.showMonitor) {
+          await this.glasses.showMonitor(itemView(this.monitor, this.monGroup(), this.monItemCursor));
+          return;
+        }
         await this.glasses.showText(itemPage(this.monitor, this.monGroup(), this.monItemCursor));
         return;
       }

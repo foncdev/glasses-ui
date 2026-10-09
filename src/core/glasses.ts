@@ -244,6 +244,51 @@ export interface CommandsView {
   note: string;
 }
 
+/** 모니터링 상태. 어댑터가 기호로 옮긴다(■ DOWN·위험, ▲ 주의, ● 정상, ○ 값 없음). */
+export type MonitorLevel = 'down' | 'crit' | 'warn' | 'ok' | 'unknown';
+
+/**
+ * 모니터링 목록(그룹 목록·그룹 안 대상 목록, showMonitor).
+ *
+ * 목록은 스크롤해도 이벤트가 오지 않아 오른쪽 카드가 고른 줄을 따라갈 수 없다.
+ * 카드는 지금 보고 있는 범위(전체·그룹)의 요약이다.
+ */
+export interface MonitorListView {
+  kind: 'list';
+  title: string;
+  status: string;
+  /** meta는 줄 오른쪽 짧은 말(DOWN 1, CPU 89%, 정상). */
+  rows: ReadonlyArray<{ state: MonitorLevel; name: string; meta: string }>;
+  summary: {
+    /** 카드 맨 위 이름. 전체면 없다. */
+    heading?: string;
+    counts: Record<MonitorLevel, number>;
+    services?: { up: number; total: number };
+    /** 지표마다 가장 나쁜 값. */
+    metrics: ReadonlyArray<{ label: string; value: string; state: MonitorLevel }>;
+  };
+  /** 줄이 없을 때 가운데 안내(설정 없음·읽는 중·읽기 실패). */
+  notice?: string;
+  hint: string;
+  note: string;
+}
+
+/** 모니터링 대상 한 장(showMonitor). 목록이 없어 카드가 조작을 받는다. */
+export interface MonitorItemView {
+  kind: 'item';
+  state: MonitorLevel;
+  title: string;
+  status: string;
+  /** ratio가 있으면 게이지를 그린다(끝값이 있는 지표). */
+  metrics: ReadonlyArray<{ label: string; value: string; ratio?: number; state: MonitorLevel }>;
+  services: ReadonlyArray<{ name: string; up: boolean }>;
+  notice?: string;
+  hint: string;
+  note: string;
+}
+
+export type MonitorView = MonitorListView | MonitorItemView;
+
 /** 명령 실행 결과(showCommandResult). */
 export interface CommandResultView {
   title: string;
@@ -347,6 +392,9 @@ export interface GlassesAdapter {
 
   /** 명령 목록을 꾸며 그린다. 없으면 본체가 showList로 그린다. */
   showCommands?(view: CommandsView): Promise<void>;
+
+  /** 모니터링 화면을 꾸며 그린다. 없으면 본체가 목록·글로 그린다. */
+  showMonitor?(view: MonitorView): Promise<void>;
 
   /** 명령 실행 결과를 꾸며 그린다. 없으면 본체가 showText로 그린다. */
   showCommandResult?(view: CommandResultView): Promise<void>;

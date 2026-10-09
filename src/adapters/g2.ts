@@ -20,6 +20,7 @@ import {
   type ChecklistView,
   type SystemView,
   type CommandsView,
+  type MonitorView,
   type CommandResultView,
   type HistoryView,
   type HomeView,
@@ -251,6 +252,10 @@ export class G2Adapter implements GlassesAdapter {
 
   async showCommandResult(view: CommandResultView): Promise<void> {
     await this.display.showCommandResult(view);
+  }
+
+  async showMonitor(view: MonitorView): Promise<void> {
+    await this.display.showMonitor(view);
   }
 
   setTopBar(ratio: number | null): boolean {

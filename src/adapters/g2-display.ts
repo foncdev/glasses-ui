@@ -19,6 +19,7 @@ import {
   type SessionsView,
   type SystemView,
   type CommandsView,
+  type MonitorView,
   type CommandResultView,
 } from '../core/glasses.js';
 import { fitBytes } from './g2-bytes.js';
@@ -30,6 +31,7 @@ import { layoutHistory, layoutLive, layoutPermission } from './g2-talk.js';
 import { layoutChecklist } from './g2-todo.js';
 import { layoutSystem } from './g2-sys.js';
 import { layoutCommandResult, layoutCommands } from './g2-cmd.js';
+import { layoutMonitorItem, layoutMonitorList } from './g2-monitor.js';
 import {
   CreateStartUpPageContainer,
   ListContainerProperty,
@@ -76,7 +78,9 @@ type RichKind =
   | 'checklist'
   | 'system'
   | 'commands'
-  | 'command-result';
+  | 'command-result'
+  | 'monitor-list'
+  | 'monitor-item';
 
 /** 꾸민 화면의 글자 칸 하나. live면 자리가 그대로일 때 글자만 고친다. */
 interface RichText {
@@ -513,6 +517,36 @@ export class G2Display {
       ...(l.procs ? [{ id: BODY_ID, name: BODY_NAME, box: l.procs, text: l.procs.text, live: true }] : []),
       { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
     ]);
+  }
+
+  /**
+   * 꾸민 모니터링 화면. 목록이면 왼쪽 목록과 오른쪽 요약 카드, 한 장이면 큰 카드 하나가 조작을 받는다.
+   * 요약 카드 글은 제자리에서 고친다 — 값이 바뀔 때 목록을 다시 세우면 선택이 첫 줄로 돌아간다.
+   */
+  async showMonitor(view: MonitorView): Promise<void> {
+    if (view.kind === 'item') {
+      const l = layoutMonitorItem(view);
+      await this.showRich('monitor-item', [
+        { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+        { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+        { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+        { id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text, capture: true },
+        { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
+      ]);
+      return;
+    }
+    const l = layoutMonitorList(view);
+    await this.showRich(
+      'monitor-list',
+      [
+        { id: MAIN_ID, name: MAIN_NAME, box: l.statusLeft, text: l.statusLeft.text, live: true },
+        { id: STATUS_ID, name: STATUS_NAME, box: l.statusRight, text: l.statusRight.text, live: true },
+        { id: DIVIDER_ID, name: DIVIDER_NAME, box: l.divider, text: ' ' },
+        { id: SIDE_ID, name: SIDE_NAME, box: l.card, text: l.card.text, live: !l.card.capture, capture: l.card.capture },
+        { id: STATS_ID, name: FOOTER_NAME, box: l.footer, text: l.footer.text, live: true },
+      ],
+      l.list ? { box: l.list, items: l.list.items } : undefined,
+    );
   }
 
   /** 꾸민 명령 목록. 명령이 없으면 안내 카드가 조작을 받는다. */

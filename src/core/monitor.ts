@@ -11,7 +11,7 @@
  * 목록 줄에는 고른 칸 표시를 넣지 않는다. 줄이 바뀌면 목록을 다시 세우고, 그때 펌웨어의 선택이
  * 맨 위로 돌아간다. 값도 문제 있는 것만 적는다 — 정상인 대상의 CPU가 흔들릴 때마다 다시 세우지 않게.
  */
-import { clampWidth } from './glasses.js';
+import { clampWidth, type MonitorItemView, type MonitorListView } from './glasses.js';
 import { msg } from './i18n.js';
 import { MAC_COLS, MAC_ROWS } from './mac.js';
 
@@ -60,7 +60,7 @@ export interface MonitorSnapshot {
   groups: MonitorGroup[];
 }
 
-/** 막대 칸 수. 한 칸 20px — 10칸이면 화면 폭의 3분의 1이 조금 넘는다. */
+/** 막대 칸 수. */
 const BAR = 10;
 
 /** 상태 표시. ✕는 안경 글꼴에 없다. */
@@ -80,9 +80,10 @@ export function homeMeta(snap: MonitorSnapshot | undefined): string {
   return parts.length > 0 ? parts.join(' ') : '●';
 }
 
-/** 1248 → 1,248. 소수는 한 자리. */
+/** 1248 → 1,248. 10보다 작으면 소수 한 자리. */
 export function formatValue(m: Pick<MonitorMetric, 'value' | 'unit' | 'max'>): string {
-  const v = m.unit === '%' || (m.max !== undefined && Math.abs(m.value) >= 10) ? Math.round(m.value) : m.value;
+  // 10 이상이면 정수(89%), 그보다 작으면 한 자리(2.3%) — 결제 실패율처럼 작은 값이 0%·2%로 뭉개지지 않게.
+  const v = Math.abs(m.value) >= 10 ? Math.round(m.value) : Math.round(m.value * 10) / 10;
   const text = Number.isInteger(v) ? v.toLocaleString('en-US') : v.toFixed(1);
   return `${text}${m.unit}`;
 }
@@ -134,9 +135,10 @@ export function monitorHeader(snap: MonitorSnapshot | undefined, title: string):
   return tail ? `${title} ${tail}` : title;
 }
 
+/** ━·─는 굵기가 같아 막대로 읽히지 않는다. 시스템 화면처럼 █·▒로 그린다. */
 export function bar(ratio: number, n = BAR): string {
   const full = Math.max(0, Math.min(n, Math.round(ratio * n)));
-  return '━'.repeat(full) + '─'.repeat(n - full);
+  return '█'.repeat(full) + '▒'.repeat(n - full);
 }
 
 function hhmm(iso: string | undefined): string {
@@ -150,7 +152,7 @@ function hhmm(iso: string | undefined): string {
  * 대상 한 장. 늘 MAC_ROWS줄 안이고, 안내 줄은 맨 아래 자리다.
  *
  *   web-03 · web · DOWN            (이름 · 그룹 · 상태)
- *   ━━━━━━━━━─ CPU 89% ▲           (끝값이 있으면 막대)
+ *   █████████▒ CPU 89% ▲           (끝값이 있으면 막대)
  *   주문 1,248건                     (없으면 값만)
  *   서비스 ■worker ●api ●nginx
  *   12:03 기준 · 2/4
@@ -175,7 +177,7 @@ export function itemPage(
   const services = [...item.services].sort((a, b) => Number(a.up) - Number(b.up));
   const serviceLine =
     services.length > 0
-      ? clampWidth(`${m.monitorServiceLabel} ${services.map((s) => `${s.up ? '●' : '■'}${s.name}`).join(' ')}`, MAC_COLS)
+      ? clampWidth(`${m.monitorServiceLabel} ${services.map((s) => `${s.up ? '●' : '■'} ${s.name}`).join('\u3000')}`, MAC_COLS)
       : '';
 
   // 나쁜 지표가 먼저 보이게: 자리가 모자라면 정상인 지표부터 뺀다.
@@ -215,4 +217,110 @@ export function stateWord(s: MonitorState): string {
   if (s === 'warn') return m.monitorWarnWord;
   if (s === 'unknown') return m.monitorNoData;
   return m.monitorOk;
+}
+
+// --- 꾸민 화면(showMonitor)에 넘길 것 ---
+
+/** 그룹 줄 오른쪽: 가장 나쁜 상태의 수 하나. */
+export function groupMeta(g: MonitorGroup): string {
+  const m = msg();
+  if (g.counts.down > 0) return `DOWN ${g.counts.down}`;
+  if (g.counts.crit > 0) return m.monitorCrit(g.counts.crit);
+  if (g.counts.warn > 0) return m.monitorWarn(g.counts.warn);
+  if (g.counts.unknown === g.items.length) return m.monitorNoData;
+  return m.monitorAllOk(g.items.length);
+}
+
+/** 대상 줄 오른쪽: 가장 먼저 볼 문제 하나. */
+export function itemMeta(i: MonitorItem): string {
+  const m = msg();
+  const down = i.services.find((s) => !s.up);
+  if (down) return `${down.name} DOWN`;
+  const bad = [...i.metrics].filter((x) => x.state !== 'ok').sort((a, b) => rank(b.state) - rank(a.state))[0];
+  if (bad) return `${bad.label} ${formatValue(bad)}`;
+  return i.state === 'unknown' ? m.monitorNoData : m.monitorOk;
+}
+
+/** 지표마다 가장 나쁜 값(같은 상태면 큰 값). 그룹 요약 카드에 쓴다. */
+export function worstMetrics(items: readonly MonitorItem[]): MonitorMetric[] {
+  const out = new Map<string, MonitorMetric>();
+  for (const i of items) {
+    for (const x of i.metrics) {
+      const prev = out.get(x.key);
+      if (!prev || rank(x.state) > rank(prev.state) || (rank(x.state) === rank(prev.state) && x.value > prev.value)) out.set(x.key, x);
+    }
+  }
+  return [...out.values()];
+}
+
+function statusLine(snap: MonitorSnapshot | undefined): string {
+  const m = msg();
+  const when = hhmm(snap?.updatedAt);
+  return [snap?.stale ? m.monitorStale : '', when ? m.monitorAt(when) : ''].filter(Boolean).join('  ');
+}
+
+function emptyNotice(snap: MonitorSnapshot | undefined): string {
+  const m = msg();
+  if (!snap) return m.monitorLoading;
+  if (!snap.enabled) return m.monitorOff;
+  return snap.error ?? m.monitorLoading;
+}
+
+/** 그룹 목록. 카드는 전체 요약. */
+export function groupsView(snap: MonitorSnapshot | undefined): MonitorListView {
+  const m = msg();
+  const groups = snap?.groups ?? [];
+  const services = groups.reduce((a, g) => ({ up: a.up + g.servicesUp, total: a.total + g.servicesTotal }), { up: 0, total: 0 });
+  return {
+    kind: 'list',
+    title: '$ ~/mon',
+    status: statusLine(snap),
+    rows: groups.map((g) => ({ state: g.state, name: g.name, meta: groupMeta(g) })),
+    summary: { counts: snap?.counts ?? { down: 0, crit: 0, warn: 0, ok: 0, unknown: 0 }, services, metrics: [] },
+    notice: emptyNotice(snap),
+    hint: m.hintOpenBack,
+    note: snap?.source && snap.source !== 'off' ? snap.source : '',
+  };
+}
+
+/** 그룹 안 대상 목록. 카드는 그 그룹 요약과 지표마다 가장 나쁜 값. */
+export function groupView(snap: MonitorSnapshot | undefined, g: MonitorGroup | undefined): MonitorListView {
+  const m = msg();
+  return {
+    kind: 'list',
+    title: `$ ~/mon/${g?.name ?? ''}`,
+    status: statusLine(snap),
+    rows: (g?.items ?? []).map((i) => ({ state: i.state, name: i.name, meta: itemMeta(i) })),
+    summary: {
+      heading: g?.name,
+      counts: g?.counts ?? { down: 0, crit: 0, warn: 0, ok: 0, unknown: 0 },
+      services: g ? { up: g.servicesUp, total: g.servicesTotal } : undefined,
+      metrics: worstMetrics(g?.items ?? []).map((x) => ({ label: x.label, value: formatValue(x), state: x.state })),
+    },
+    notice: g ? m.monitorNoData : emptyNotice(snap),
+    hint: m.hintOpenBack,
+    note: g ? m.monitorTargets(g.items.length) : '',
+  };
+}
+
+/** 대상 한 장. */
+export function itemView(snap: MonitorSnapshot | undefined, g: MonitorGroup | undefined, index: number): MonitorItemView {
+  const m = msg();
+  const i = g?.items[index];
+  return {
+    kind: 'item',
+    state: i?.state ?? 'unknown',
+    title: i?.name ?? m.menuMonitor,
+    status: [g?.name ?? '', i ? stateWord(i.state) : '', statusLine(snap)].filter(Boolean).join(' · '),
+    metrics: (i?.metrics ?? []).map((x) => ({
+      label: x.label,
+      value: formatValue(x),
+      ...(x.max !== undefined && x.max > 0 ? { ratio: x.value / x.max } : {}),
+      state: x.state,
+    })),
+    services: i?.services ?? [],
+    notice: m.monitorNoData,
+    hint: m.monitorItemHint,
+    note: g && g.items.length > 1 ? `${index + 1}/${g.items.length}` : '',
+  };
 }

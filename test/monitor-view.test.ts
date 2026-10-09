@@ -109,27 +109,27 @@ test('대상 줄: 문제 있는 것만 값을 적고, 정상이면 정상이라�
 test('값: 백분율은 정수, 큰 수는 쉼표, 막대는 10칸', () => {
   assert.equal(formatValue({ value: 89.6, unit: '%', max: 100 }), '90%');
   assert.equal(formatValue({ value: 1248, unit: '건' }), '1,248건');
-  assert.equal(formatValue({ value: 2.34, unit: '%', max: 10 }), '2%');
+  assert.equal(formatValue({ value: 2.34, unit: '%', max: 10 }), '2.3%');
   assert.equal(formatValue({ value: 2.3, unit: 'ms' }), '2.3ms');
-  assert.equal(bar(0.5), '━━━━━─────');
-  assert.equal(bar(1.4), '━━━━━━━━━━');
-  assert.equal(bar(-1), '──────────');
+  assert.equal(bar(0.5), '█████▒▒▒▒▒');
+  assert.equal(bar(1.4), '██████████');
+  assert.equal(bar(-1), '▒▒▒▒▒▒▒▒▒▒');
 });
 
 test('한 장: 머리, 막대·값, 서비스, 기준 시각·위치, 안내', () => {
   setLocale('ko');
   const page = itemPage(SNAP, WEB, 0).split('\n');
   assert.equal(page[0], '■ web-03 · web · DOWN');
-  assert.equal(page[1], '━━━━━━━━━─ CPU 89% ▲');
-  assert.equal(page[2], '━━━━────── 디스크 44%');
-  assert.equal(page[4], '서비스 ■worker ●api ●nginx');
+  assert.equal(page[1], '█████████▒ CPU 89% ▲');
+  assert.equal(page[2], '████▒▒▒▒▒▒ 디스크 44%');
+  assert.equal(page[4], '서비스 ■ worker\u3000● api\u3000● nginx');
   assert.match(page.at(-2)!, /^\d\d:\d\d 기준 · 1\/3$/);
   assert.equal(page.at(-1), msg().monitorItemHint);
   assert.equal(page.length, MAC_ROWS);
 
   // 끝값이 없는 업무 지표는 막대 없이 값만.
   const shop = itemPage(SNAP, SHOP, 0).split('\n');
-  assert.deepEqual(shop.slice(1, 4), ['주문 1,248건', '반품 57건 ▲', '━━────────── 결제 실패율 2%'.replace('━━──────────', bar(0.23))]);
+  assert.deepEqual(shop.slice(1, 4), ['주문 1,248건', '반품 57건 ▲', `${bar(0.23)} 결제 실패율 2.3%`]);
 });
 
 test('지표가 많으면 나쁜 것부터 남기고 나머지는 수만 적는다. 어떤 글이든 화면 안이다', () => {

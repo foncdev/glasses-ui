@@ -387,7 +387,8 @@ test('발표 자료: 메뉴에서 바로 연다. 비었으면 넣을 폴더를 �
     await empty.r.openMenu('mac');
     await empty.fire('tap', 5);
     assert.equal(empty.r.screen, 'mac-present-files');
-    assert.deepEqual(empty.lists.at(-1)!.items, ['~/Documents/발표에 Keynote·PowerPoint 파일을 넣으세요']);
+    assert.match(empty.texts.at(-1)!, /~\/Documents\/발표에 Keynote·PowerPoint/);
+    fitsScreen(empty.texts.at(-1)!);
   } finally {
     empty.restore();
   }
@@ -405,6 +406,125 @@ test('발표 자료: 메뉴에서 바로 연다. 비었으면 넣을 폴더를 �
     assert.deepEqual(failing.lists.at(-1)!.items, ['a.key']);
   } finally {
     failing.restore();
+  }
+});
+
+test('발표 전 화면: 자료 기능이 있으면 [시작] [자료] 단추. 자료를 고르면 목록, 시작을 탭하면 발표', async () => {
+  let status = 'ready';
+  const h = await harness({
+    '/present/state': () => (status === 'ready' ? { status: 'ready', slide: 1, total: 4, document: '이미 연 발표.key' } : playing(1)),
+    '/present/files': { folder: '~/Documents/발표', files: [{ name: '다른 발표.key' }] },
+    '/present/start': () => {
+      status = 'playing';
+      return playing(1);
+    },
+  }, filesCaps);
+  try {
+    await h.r.openMenu('mac');
+    await h.fire('tap', 0);
+    assert.equal(h.r.screen, 'mac-present', '문서가 열려 있으면 리모컨이다');
+    assert.ok(h.texts.at(-1)!.split('\n').includes('  [▶시작]    자료 '));
+
+    await h.fire('down');
+    await h.fire('tap');
+    assert.equal(h.r.screen, 'mac-present-files');
+    assert.deepEqual(h.lists.at(-1)!.items, ['다른 발표.key']);
+
+    await h.fire('doubleTap');
+    await h.fire('tap', 0);
+    await h.fire('tap');
+    assert.equal(h.calls.at(-1)!.path, '/present/start');
+    assert.ok(h.texts.at(-1)!.split('\n').includes('   이전    [▶다음]    끄기 '), '발표가 시작되면 다음에 놓인다');
+  } finally {
+    h.restore();
+  }
+});
+
+test('발표 상태를 못 읽어도 자료 기능이 있으면 목록으로 간다', async () => {
+  const h = await harness({
+    '/present/state': new Error('Keynote 제어 권한이 없습니다.'),
+    '/present/files': { folder: '~', files: [{ name: 'a.key' }] },
+  }, filesCaps);
+  try {
+    await h.r.openMenu('mac');
+    await h.fire('tap', 0);
+    assert.equal(h.r.screen, 'mac-present-files');
+    assert.deepEqual(h.lists.at(-1)!.items, ['a.key']);
+  } finally {
+    h.restore();
+  }
+});
+
+test('발표 자료 폴더를 맥이 못 읽으면(권한) 사유와 고칠 곳을 글 화면으로 다 보인다', async () => {
+  const denied = '~/Documents/발표을 읽을 권한이 없습니다. 맥의 시스템 설정 > 개인정보 보호 및 보안 > 파일 및 폴더에서 mac-agent를 켜세요.';
+  const h = await harness({ '/present/state': { status: 'none' }, '/present/files': new Error(denied) }, filesCaps);
+  try {
+    await h.r.openMenu('mac');
+    await h.fire('tap', 0);
+    assert.equal(h.r.screen, 'mac-present-files');
+    const text = h.texts.at(-1)!;
+    assert.match(text.replace(/\n/g, ''), /파일 및 폴더에서 mac-agent를 켜세요/);
+    fitsScreen(text);
+    await h.fire('doubleTap');
+    assert.equal(h.r.screen, 'mac');
+  } finally {
+    h.restore();
+  }
+});
+
+test('발표 자료: 자모로 풀린 한글 이름은 완성형으로 보이고, Pages·PDF는 문서 화면에서 위아래로 스크롤한다', async () => {
+  const nfd = '회의록.pages'.normalize('NFD');
+  const h = await harness({
+    '/present/state': { status: 'none' },
+    '/present/files': { folder: '~/Documents', files: [{ name: nfd, app: 'pages' }, { name: '발표.key', app: 'keynote' }] },
+    '/present/open': { status: 'opened', app: 'pages', document: '회의록.pages' },
+    '/present/scroll': { status: 'scrolled' },
+  }, filesCaps);
+  try {
+    await h.r.openMenu('mac');
+    await h.fire('tap', 0);
+    const items = h.lists.at(-1)!.items as string[];
+    assert.equal(items[0], '회의록.pages'.normalize('NFC'));
+    assert.equal(items[0].length, '회의록.pages'.length, '완성형이다');
+
+    await h.fire('tap', 0);
+    assert.deepEqual(h.calls.find((c) => c.path === '/present/open')!.body, { name: nfd }, '맥에는 받은 이름 그대로 보낸다');
+    assert.equal(h.r.screen, 'mac-document', 'Pages는 리모컨이 아니라 문서 화면이다');
+    assert.match(h.texts.at(-1)!, /^회의록\.pages\nPages/);
+    fitsScreen(h.texts.at(-1)!);
+
+    await h.fire('down');
+    await h.fire('up');
+    await h.fire('tap');
+    assert.deepEqual(h.calls.filter((c) => c.path === '/present/scroll').map((c) => c.body), [
+      { direction: 'down', page: false }, { direction: 'up', page: false }, { direction: 'down', page: true },
+    ]);
+
+    await h.fire('doubleTap');
+    assert.equal(h.r.screen, 'mac-present-files', '문서에서 두 번 탭은 목록으로');
+    assert.deepEqual(h.lists.at(-1)!.items, items);
+  } finally {
+    h.restore();
+  }
+});
+
+test('문서 스크롤이 막히면(손쉬운 사용 권한) 사유를 문서 화면에 보인다', async () => {
+  const h = await harness({
+    '/present/state': { status: 'none' },
+    '/present/files': { folder: '~', files: [{ name: '자료.pdf', app: 'preview' }] },
+    '/present/open': { status: 'opened', app: 'preview', document: '자료.pdf' },
+    '/present/scroll': new Error('스크롤하려면 손쉬운 사용에서 mac-agent를 켜세요.'),
+  }, filesCaps);
+  try {
+    await h.r.openMenu('mac');
+    await h.fire('tap', 0);
+    await h.fire('tap', 0);
+    assert.match(h.texts.at(-1)!, /\nPDF\n/);
+    await h.fire('down');
+    assert.match(h.texts.at(-1)!.replace(/\n/g, ''), /손쉬운 사용에서 mac-agent를 ?켜세요/, '줄이 나뉘어도 사유가 다 보인다');
+    fitsScreen(h.texts.at(-1)!);
+  } finally {
+    h.restore();
   }
 });
 

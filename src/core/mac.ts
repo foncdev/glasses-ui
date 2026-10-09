@@ -221,21 +221,59 @@ function elapsedMinutes(startedAt: string | undefined, now: number): number | un
   return Number.isNaN(t) ? undefined : Math.max(0, Math.floor((now - t) / 60_000));
 }
 
-/** 발표 중 아래 줄 단추. 위아래로 고르고 탭으로 실행한다. */
-export const PRESENT_ACTIONS = ['prev', 'next', 'stop'] as const;
-export type PresentAction = (typeof PRESENT_ACTIONS)[number];
+export type PresentAction = 'prev' | 'next' | 'stop' | 'start' | 'files';
 
-/** 발표 단추 고르기 상태. stopArmed면 끄기를 한 번 더 눌러야 실행한다(실수로 끄지 않게). */
+/** 발표 중 아래 줄 단추. 위아래로 고르고 탭으로 실행한다. */
+export const PRESENT_ACTIONS: readonly PresentAction[] = ['prev', 'next', 'stop'];
+/** 발표 전(대기) 단추. 맥에 발표 자료 폴더가 있을 때만 쓴다. 없으면 단추 없이 탭이 시작이다. */
+export const READY_ACTIONS: readonly PresentAction[] = ['start', 'files'];
+
+/**
+ * 발표 단추 고르기 상태. stopArmed면 끄기를 한 번 더 눌러야 실행한다(실수로 끄지 않게).
+ * actions를 주지 않으면 발표 중에는 PRESENT_ACTIONS, 발표 전에는 단추가 없다.
+ */
 export interface PresentControls {
   cursor: number;
   stopArmed: boolean;
+  actions?: readonly PresentAction[];
+}
+
+function actionLabel(action: PresentAction): string {
+  const m = msg();
+  switch (action) {
+    case 'prev':
+      return m.presentPrevAction;
+    case 'next':
+      return m.presentNextAction;
+    case 'stop':
+      return m.presentStopAction;
+    case 'start':
+      return m.presentStartAction;
+    case 'files':
+      return m.presentFilesAction;
+  }
 }
 
 /** 단추 줄. 고른 단추는 [▶ ]로 감싼다. */
-function presentActionsRow(cursor: number): string {
+function presentActionsRow(actions: readonly PresentAction[], cursor: number): string {
+  return '  ' + actions.map((a, i) => (i === cursor ? `[▶${actionLabel(a)}]` : ` ${actionLabel(a)} `)).join('   ');
+}
+
+/**
+ * 발표 자료를 보일 수 없을 때의 글 화면(빈 폴더·권한 없음 등).
+ * 목록 한 줄은 63바이트에서 잘려 안내가 끊기므로 글로 보인다.
+ */
+export function presentFilesPage(message: string): string {
   const m = msg();
-  const labels = [m.presentPrevAction, m.presentNextAction, m.presentStopAction];
-  return '  ' + labels.map((label, i) => (i === cursor ? `[▶${label}]` : ` ${label} `)).join('   ');
+  return page(m.macPresentFiles, wrapLines(message, MAC_COLS, MAC_ROWS - 2), m.hintBack);
+}
+
+/** 안경에서 연 문서(Pages·PDF) 화면. 위아래로 맥 문서를 스크롤한다. */
+export function documentPage(name: string, app: string, error: string | undefined): string {
+  const m = msg();
+  const body = [m.documentApp(app), ' ', ...wrapLines(m.documentBody, MAC_COLS, 3)];
+  if (error) body.push(' ', ...wrapLines(error, MAC_COLS, 4));
+  return page(name, body, m.documentHint);
 }
 
 export function presentPage(
@@ -259,17 +297,18 @@ export function presentPage(
     .filter(Boolean)
     .join(' · ');
 
-  // 노트가 주인공이다. 다음 쪽 노트는 한 줄만 미리 보인다. 발표 중이면 맨 아래에 단추 줄을 둔다.
+  // 노트가 주인공이다. 다음 쪽 노트는 한 줄만 미리 보인다. 단추가 있으면 맨 아래에 단추 줄을 둔다.
+  const actions = controls.actions ?? (playing ? PRESENT_ACTIONS : []);
   const next = state.nextNotes ? `${m.presentNext}: ${state.nextNotes.split('\n')[0]}` : '';
-  const notesRows = MAC_ROWS - 2 - (next ? 2 : 0) - (error ? 1 : 0) - (playing ? 1 : 0);
+  const notesRows = MAC_ROWS - 2 - (next ? 2 : 0) - (error ? 1 : 0) - (actions.length > 0 ? 1 : 0);
   const notes = state.notes ? wrapLines(state.notes, MAC_COLS, notesRows) : [m.presentNoNotes];
   const body = [...notes];
   if (next) body.push(' ', clip(next, MAC_COLS));
   if (error) body.unshift(clip(error, MAC_COLS));
-  if (!playing) return page(head, body, m.presentStartHint);
+  if (actions.length === 0) return page(head, body, m.presentStartHint);
   // 단추 줄은 늘 힌트 바로 위다. 노트가 짧으면 빈 줄로 채워 자리를 고정한다.
   while (body.length < MAC_ROWS - 3) body.push(' ');
-  body.push(presentActionsRow(controls.cursor));
+  body.push(presentActionsRow(actions, controls.cursor));
   return page(head, body, controls.stopArmed ? m.presentStopConfirm : m.presentHint);
 }
 

@@ -63,7 +63,11 @@ import {
   messageSender,
   quickReplies,
   presentPage,
+  presentFilesPage,
+  documentPage,
   PRESENT_ACTIONS,
+  READY_ACTIONS,
+  type PresentAction,
   prompterPage,
   reasonText,
   shortcutPage,
@@ -109,6 +113,7 @@ type Screen =
   | 'mac-meeting'
   | 'mac-shortcuts'
   | 'mac-present-files'
+  | 'mac-document'
   | 'mac-prompter'
   | 'mac-reply'
   | 'mac-result';
@@ -632,7 +637,7 @@ export class GlassesUI {
   private macTick?: ReturnType<typeof setInterval>;
   private macError?: string;
   private macPresent?: PresentState;
-  /** 발표 단추 줄에서 고른 것(PRESENT_ACTIONS 순서). 처음엔 '다음'이다. */
+  /** 발표 단추 줄에서 고른 것(presentActions() 순서). 발표 중엔 '다음', 발표 전엔 '시작'에서 시작한다. */
   private presentCursor = 1;
   /** '끄기'를 한 번 눌러 확인을 기다리는 중인지. */
   private presentStopArmed = false;
@@ -648,6 +653,8 @@ export class GlassesUI {
   private macPresentFiles?: PresentFile[];
   private macPresentFolder = '';
   private macPresentFileCursor = 0;
+  /** 안경에서 연 문서(Pages·PDF). 문서 화면에서 위아래로 스크롤한다. */
+  private macDocument?: { name: string; app: string };
   private macPrompter?: PrompterState;
   private macResult?: { name: string; state: string; output?: string };
   /** 결과 화면에서 돌아갈 곳. */
@@ -1793,6 +1800,7 @@ export class GlassesUI {
           presentPage(this.macPresent, this.macError, Date.now(), {
             cursor: this.presentCursor,
             stopArmed: this.presentStopArmed,
+            actions: this.presentActions(),
           }),
         );
         return;
@@ -1823,15 +1831,23 @@ export class GlassesUI {
       if (this.screen === 'mac-present-files') {
         const m = msg();
         const files = this.macPresentFiles;
-        const rows =
-          files === undefined
-            ? [m.reading]
-            : files.length > 0
-              ? files.map((f) => f.name)
-              : [this.macError ?? m.presentFilesEmpty(this.macPresentFolder || '~/Documents/발표')];
+        if (files !== undefined && files.length === 0) {
+          // 비었거나 못 읽었다(권한 등). 안내가 길어 목록 대신 글로 보인다.
+          await this.glasses.showText(
+            presentFilesPage(this.macError ?? m.presentFilesEmpty(this.macPresentFolder || '~/Documents')),
+          );
+          return;
+        }
+        // 맥 파일 이름은 한글이 자모로 풀려(NFD) 오기도 한다. 안경 글꼴은 완성형만 그린다.
+        const rows = files === undefined ? [m.reading] : files.map((f) => f.name.normalize('NFC'));
         // 열다 실패하면 머리에 사유를 싣는다. 줄을 끼워 넣으면 커서 자리가 어긋난다.
-        const head = files && files.length > 0 && this.macError ? this.macError : m.macPresentFiles;
+        const head = files && this.macError ? this.macError : m.macPresentFiles;
         await this.glasses.showList(m.withBack(head), rows);
+        return;
+      }
+      if (this.screen === 'mac-document') {
+        const d = this.macDocument;
+        await this.glasses.showText(documentPage(d?.name ?? '', d?.app ?? 'pages', this.macError));
         return;
       }
       if (this.screen === 'mac-reply') {
@@ -2528,13 +2544,13 @@ export class GlassesUI {
   private async openPresent(autoFiles = true): Promise<void> {
     this.screen = 'mac-present';
     this.macPresent = undefined;
-    this.presentCursor = 1;
+    this.presentCursor = 0;
     this.presentStopArmed = false;
     this.armIdle(); // 발표 화면에서는 타이머를 걷는다.
     await this.render();
     const load = async (): Promise<void> => {
       try {
-        this.macPresent = await agentCli.mac<PresentState>('/present/state');
+        this.setPresent(await agentCli.mac<PresentState>('/present/state'));
         this.macError = undefined;
       } catch (err) {
         this.macError = errorText(err);
@@ -2543,20 +2559,17 @@ export class GlassesUI {
     };
     await load();
     // load()가 채운 값이다. 위에서 undefined로 비운 것으로 좁혀지지 않게 다시 읽는다.
+    // 상태를 못 읽었어도(권한·오류) 자료 목록은 볼 수 있게 넘어간다.
     const status = (this.macPresent as PresentState | undefined)?.status;
-    const noDocument = status === 'none' || status === 'no_document';
-    if (autoFiles && noDocument && this.macCaps?.some((c) => c.id === 'present-files' && c.ready)) {
-      return this.openPresentFiles();
-    }
+    const noDocument = status === undefined || status === 'none' || status === 'no_document';
+    if (autoFiles && noDocument && this.presentFilesReady()) return this.openPresentFiles();
     this.macStop = agentCli.streamMac(
       '/present/stream',
       ['state', 'error'],
       (type, data) => {
         if (type === 'state') {
-          this.macPresent = data as PresentState;
+          this.setPresent(data as PresentState);
           this.macError = undefined;
-          // 맥에서 발표를 끝냈으면 끄기 확인을 거둔다.
-          if (this.macPresent.status !== 'playing') this.presentStopArmed = false;
         } else {
           this.macError = errorText((data as { error?: unknown }).error);
         }
@@ -2571,11 +2584,34 @@ export class GlassesUI {
     (this.macTick as { unref?: () => void }).unref?.();
   }
 
+  /** 맥에 발표 자료 폴더 기능이 있는지. */
+  private presentFilesReady(): boolean {
+    return Boolean(this.macCaps?.some((c) => c.id === 'present-files' && c.ready));
+  }
+
+  /** 지금 상태에서 쓸 발표 단추. 단추가 없으면 예전처럼 탭은 시작, 위아래는 쪽이다. */
+  private presentActions(): readonly PresentAction[] {
+    if (this.macPresent?.status === 'playing') return PRESENT_ACTIONS;
+    if (this.macPresent?.status === 'ready' && this.presentFilesReady()) return READY_ACTIONS;
+    return [];
+  }
+
+  /**
+   * 발표 상태를 바꾼다. 발표 중↔발표 전으로 바뀌면 단추 자리를 처음으로(발표 중 '다음', 발표 전 '시작'),
+   * 발표가 끝났으면 끄기 확인도 거둔다.
+   */
+  private setPresent(state: PresentState): void {
+    const before = this.macPresent?.status === 'playing';
+    this.macPresent = state;
+    const playing = state.status === 'playing';
+    if (before !== playing) this.presentCursor = playing ? 1 : 0;
+    if (!playing) this.presentStopArmed = false;
+  }
+
   private async presentCommand(command: 'next' | 'prev' | 'start' | 'stop'): Promise<void> {
     try {
-      this.macPresent = await agentCli.mac<PresentState>(`/present/${command}`, {});
+      this.setPresent(await agentCli.mac<PresentState>(`/present/${command}`, {}));
       this.macError = undefined;
-      if (command === 'stop') this.presentCursor = 1;
     } catch (err) {
       this.macError = errorText(err);
     }
@@ -2735,19 +2771,45 @@ export class GlassesUI {
     if (this.screen === 'mac-present-files') await this.render();
   }
 
-  /** 고른 자료를 맥에서 열고 발표 리모컨으로 간다. 발표 시작은 리모컨에서 탭으로 한다. */
+  /**
+   * 고른 자료를 맥에서 열고 발표 리모컨으로 간다. 발표 시작은 리모컨에서 탭으로 한다.
+   * 발표 앱이 아닌 문서(Pages·PDF)는 맥이 열기만 하고 status:"opened"로 답한다. 그때는 문서 화면으로 가서
+   * 위아래로 그 문서를 스크롤한다.
+   */
   private async openPresentFile(file: PresentFile): Promise<void> {
-    await this.glasses.showText(msg().presentOpening(file.name));
+    const name = file.name.normalize('NFC');
+    await this.glasses.showText(msg().presentOpening(name));
+    let reply: { status?: string; app?: string };
     try {
       // 앱을 띄우고 문서를 여는 데 몇 초 걸린다. 맥은 문서가 잡힐 때까지(최대 15초) 기다렸다 답한다.
-      await agentCli.mac<PresentState>('/present/open', { name: file.name }, 30_000);
+      reply = await agentCli.mac<{ status?: string; app?: string }>('/present/open', { name: file.name }, 30_000);
     } catch (err) {
       this.macError = errorText(err);
       await this.render();
       return;
     }
     this.macError = undefined;
+    if (reply.status === 'opened') {
+      this.macDocument = { name, app: reply.app ?? file.app ?? 'pages' };
+      this.screen = 'mac-document';
+      await this.render();
+      return;
+    }
     await this.openPresent(false);
+  }
+
+  /** 연 문서를 스크롤한다. page면 거의 한 화면. */
+  private async scrollDocument(direction: 'up' | 'down', page = false): Promise<void> {
+    try {
+      await agentCli.mac('/present/scroll', { direction, page });
+      if (this.macError) {
+        this.macError = undefined;
+        await this.render();
+      }
+    } catch (err) {
+      this.macError = errorText(err);
+      await this.render();
+    }
   }
 
   private async openMacShortcuts(): Promise<void> {
@@ -3083,11 +3145,11 @@ export class GlassesUI {
       return;
     }
 
-    // 발표: 발표 중이면 아래 단추 줄(이전·다음·끄기)을 위아래로 고르고 탭으로 실행한다.
+    // 발표: 아래 단추 줄(발표 중 이전·다음·끄기, 발표 전 시작·자료)을 위아래로 고르고 탭으로 실행한다.
     // 고른 자리가 남아 '다음'에 두면 탭만으로 계속 넘긴다. 끄기는 한 번 더 탭해야 실행한다.
-    // 발표 전이면 탭은 시작, 위아래는 이전·다음 쪽이다.
+    // 단추가 없으면(발표 자료 기능이 없는 맥·PC의 발표 전) 탭은 시작, 위아래는 이전·다음 쪽이다.
     if (this.screen === 'mac-present') {
-      const playing = this.macPresent?.status === 'playing';
+      const actions = this.presentActions();
       if (gesture === 'doubleTap') {
         if (this.presentStopArmed) {
           this.presentStopArmed = false;
@@ -3095,7 +3157,7 @@ export class GlassesUI {
         }
         return this.backToMac();
       }
-      if (!playing) {
+      if (actions.length === 0) {
         if (gesture === 'up') return this.presentCommand('prev');
         if (gesture === 'down') return this.presentCommand('next');
         if (gesture === 'tap') return this.presentCommand('start');
@@ -3103,12 +3165,13 @@ export class GlassesUI {
       }
       if (gesture === 'up' || gesture === 'down') {
         const step = gesture === 'up' ? -1 : 1;
-        this.presentCursor = Math.min(Math.max(this.presentCursor + step, 0), PRESENT_ACTIONS.length - 1);
+        this.presentCursor = Math.min(Math.max(this.presentCursor + step, 0), actions.length - 1);
         this.presentStopArmed = false;
         return this.render();
       }
       if (gesture === 'tap') {
-        const action = PRESENT_ACTIONS[this.presentCursor];
+        const action = actions[Math.min(this.presentCursor, actions.length - 1)];
+        if (action === 'files') return this.openPresentFiles();
         if (action !== 'stop') return this.presentCommand(action);
         if (!this.presentStopArmed) {
           this.presentStopArmed = true;
@@ -3180,6 +3243,18 @@ export class GlassesUI {
         const file = files[this.macPresentFileCursor];
         if (file) await this.openPresentFile(file);
       }
+      return;
+    }
+
+    // 문서(Pages·PDF): 위아래는 스크롤, 탭은 한 화면 아래로, 두 번 탭은 목록으로.
+    if (this.screen === 'mac-document') {
+      if (gesture === 'doubleTap') {
+        this.macError = undefined;
+        this.screen = 'mac-present-files';
+        return this.render();
+      }
+      if (gesture === 'up' || gesture === 'down') return this.scrollDocument(gesture);
+      if (gesture === 'tap') return this.scrollDocument('down', true);
       return;
     }
 

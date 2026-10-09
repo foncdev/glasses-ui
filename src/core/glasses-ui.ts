@@ -114,6 +114,7 @@ type Screen =
   | 'history'
   | 'detail'
   | 'slash'
+  | 'slash-confirm'
   | 'reader'
   | 'notifications'
   | 'notification'
@@ -662,8 +663,11 @@ export class GlassesUI {
   private cmdCursor = 0;
   /** Claude 명령 화면의 커서. 맨 끝 한 칸은 '할 일 보기'다. */
   private slashCursor = 0;
-  /** 한 번 더 탭해야 보내는 명령(/clear). 커서를 옮기면 풀린다. */
-  private slashConfirm = '';
+  /** 보낼지 묻고 있는 명령과 그 화면을 그린 때(펌웨어가 흘리는 헛 탭을 거른다). */
+  private slashPick: SlashItem | null = null;
+  private slashPickAt = 0;
+  /** 보내고 결과를 기다리는 명령. 턴이 끝나면 결과 읽기로 바로 보인다. */
+  private awaitingCommand = '';
   /** 보고 있는 세션의 마지막 답 전문. 대화 화면은 첫 줄만 보이므로 결과 읽기에서 끝까지 넘긴다. */
   private lastReply = '';
   /** 결과 읽기: 머리글과 쪽들, 지금 쪽 */
@@ -1165,7 +1169,9 @@ export class GlassesUI {
         id,
         (e) => {
           // 상세 화면에서 보고 있는 세션은 그쪽 구독이 처리한다.
-          if (this.screen === 'detail' && this.activeId === id) return;
+          // 대화 화면에서 연 구독(detailStop)이 처리한다. 명령·결과·할 일 화면으로 옮겨도 그 구독은 살아 있어,
+          // 여기서도 받으면 완료 알림이 두 번 뜬다.
+          if (this.detailStop && this.activeId === id) return;
           void this.handleBackgroundEvent(id, e);
         },
         () => undefined,
@@ -1890,16 +1896,27 @@ export class GlassesUI {
       if (this.screen === 'slash') {
         const m = msg();
         const items = this.shownSlash();
-        const header = this.slashConfirm
-          ? m.slashConfirm(this.slashConfirm)
-          : m.withBack(m.slashHeader(this.slashCursor + 1, items.length + 1));
-        await this.glasses.showList(header, [
-          ...items.map((c, i) => {
+        // 고른 칸 표시를 붙이지 않는다. 표시가 바뀌면 목록을 다시 세우는데, 그때 펌웨어의 선택이
+        // 맨 위로 돌아가 다음 탭이 엉뚱한 명령(첫 칸)으로 읽혔다. 선택은 펌웨어가 보인다.
+        await this.glasses.showList(m.withBack(m.slashHeader(items.length)), [
+          ...items.map((c) => {
             const desc = c.key ? m.slashDesc(c.key) : '';
-            return { text: clamp(`/${c.name}${desc ? `  ${desc}` : ''}`, 40), state: i === this.slashCursor ? ('running' as const) : undefined };
+            return clamp(`/${c.name}${desc ? `  ${desc}` : ''}`, 40);
           }),
-          { text: m.slashTodo, state: this.slashCursor === items.length ? ('running' as const) : undefined },
+          m.slashTodo,
         ]);
+        return;
+      }
+
+      if (this.screen === 'slash-confirm' && this.slashPick) {
+        const m = msg();
+        const c = this.slashPick;
+        const s = this.sessions.find((x) => x.id === this.activeId);
+        const desc = c.key ? m.slashDesc(c.key) : '';
+        const body = [desc, m.slashSession(s?.title || m.newChat), c.confirm ? m.slashClearWarn : ''].filter(Boolean);
+        await this.glasses.showText(
+          [clampWidth(m.slashAsk(c.name), MAC_COLS), ' ', ...body.map((l) => clampWidth(l, MAC_COLS)), ' ', m.slashAskHint].join('\n'),
+        );
         return;
       }
 
@@ -2156,12 +2173,46 @@ export class GlassesUI {
     else if (e.type === 'turn_complete' && String(e.result ?? '').trim()) this.lastReply = String(e.result);
   }
 
+  /**
+   * 명령을 보내고, 끝날 때까지 '실행 중' 화면에 머문다. 턴이 끝나면 결과를 결과 읽기로 바로 보인다 —
+   * 보내자마자 대화 화면으로 돌아가면 무엇이 됐는지 알기 어려웠다.
+   */
+  private async runSlash(c: SlashItem): Promise<void> {
+    const m = msg();
+    this.awaitingCommand = c.name;
+    this.lastReply = '';
+    this.reader = { title: `/${c.name}`, pages: [[m.slashRunning]], page: 0 };
+    this.screen = 'reader';
+    this.status = 'busy';
+    this.doneIds.delete(this.activeId);
+    this.wake();
+    await this.render();
+    try {
+      await agentCli.sendInput(this.activeId, `/${c.name}`);
+      this.log(m.slashSent(c.name), 'ok');
+    } catch (err) {
+      this.awaitingCommand = '';
+      this.status = '';
+      this.log(m.slashFailed((err as Error).message), 'error');
+      this.reader = { title: `/${c.name}`, pages: [[m.slashFailed((err as Error).message)]], page: 0 };
+      await this.render();
+    }
+  }
+
+  /** 기다리던 명령이 끝났다. 결과 읽기로 보인다. */
+  private async commandDone(): Promise<void> {
+    const name = this.awaitingCommand;
+    if (!name) return;
+    this.awaitingCommand = '';
+    await this.openReader(`/${name}`);
+  }
+
   /** 마지막 답을 쪽으로 나눠 연다. /usage 결과면 한도 카드를 첫 쪽에 둔다. */
-  private async openReader(): Promise<void> {
+  private async openReader(heading?: string): Promise<void> {
     const m = msg();
     const rows = MAC_ROWS - 2;
     const usage = parseUsage(this.lastReply);
-    let title = m.readerTitle;
+    let title = heading ?? m.readerTitle;
     let pages: string[][];
     if (usage) {
       title = m.usageTitle(usage.subscription);
@@ -2274,7 +2325,8 @@ export class GlassesUI {
       const m = msg();
       this.glasses.speak(failed ? m.speakFailed : m.speakDone(result));
       this.log(`${failed ? m.kindError : m.kindDone}: ${result}`, failed ? 'error' : 'ok');
-      await this.render();
+      if (this.awaitingCommand) await this.commandDone();
+      else await this.render();
       void this.refresh();
       return;
     }
@@ -3715,6 +3767,8 @@ export class GlassesUI {
     if (this.screen === 'reader') {
       const r = this.reader;
       if (!r || gesture === 'doubleTap') {
+        // 기다리던 명령이 있어도 그만 본다. 끝나면 대화 화면에 평소처럼 뜬다.
+        this.awaitingCommand = '';
         this.reader = null;
         this.screen = 'detail';
         await this.render();
@@ -3733,39 +3787,38 @@ export class GlassesUI {
       return;
     }
 
-    // Claude 명령: 골라 탭하면 그 세션에 보낸다. 맨 끝 칸은 할 일 목록.
+    // Claude 명령: 골라 탭하면 보낼지 묻는다. 맨 끝 칸은 할 일 목록.
     if (this.screen === 'slash') {
       if (gesture === 'doubleTap') {
-        this.slashConfirm = '';
         this.screen = 'detail';
         await this.render();
         return;
       }
       const items = this.shownSlash();
-      const before = this.slashCursor;
-      if (this.moveCursor(gesture, selectedIndex, 'slashCursor', items.length + 1)) {
-        this.slashConfirm = '';
-        await this.render();
-        return;
-      }
-      if (this.slashCursor !== before) this.slashConfirm = '';
+      if (this.moveCursor(gesture, selectedIndex, 'slashCursor', items.length + 1)) return;
       if (gesture !== 'tap') return;
       const picked = items[this.slashCursor];
       if (!picked) return this.openChecklist();
-      if (picked.confirm && this.slashConfirm !== picked.name) {
-        this.slashConfirm = picked.name;
+      this.slashPick = picked;
+      this.slashPickAt = Date.now();
+      this.screen = 'slash-confirm';
+      await this.render();
+      return;
+    }
+
+    // 보낼지 묻는 화면: 탭이 보내기, 더블탭이 취소.
+    if (this.screen === 'slash-confirm') {
+      if (gesture === 'doubleTap') {
+        this.slashPick = null;
+        this.screen = 'slash';
         await this.render();
         return;
       }
-      this.slashConfirm = '';
-      try {
-        await this.send(`/${picked.name}`);
-        this.log(msg().slashSent(picked.name), 'ok');
-      } catch (err) {
-        this.log(msg().slashFailed((err as Error).message), 'error');
-        this.screen = 'detail';
-        await this.render();
-      }
+      // 화면이 바뀌면 펌웨어가 선택 이벤트를 한 번 흘린다. 그걸 보내기로 읽으면 묻는 뜻이 없다.
+      if (gesture !== 'tap' || Date.now() - this.slashPickAt < PERMISSION_GUARD_MS) return;
+      const picked = this.slashPick;
+      this.slashPick = null;
+      if (picked) await this.runSlash(picked);
       return;
     }
 
@@ -3788,7 +3841,6 @@ export class GlassesUI {
         await this.resume(s.id);
       } else {
         this.slashCursor = 0;
-        this.slashConfirm = '';
         this.screen = 'slash';
         await this.render();
       }
@@ -3947,13 +3999,16 @@ export class GlassesUI {
    * 세션 목록에서 가져온다(refresh → syncPending).
    */
   private async pollDetail(id: string): Promise<void> {
-    if (this.stopped || this.screen !== 'detail' || this.activeId !== id) return;
+    const watching = (): boolean => this.activeId === id && (this.screen === 'detail' || this.awaitingCommand !== '');
+    if (this.stopped || !watching()) return;
     try {
       const events = await agentCli.getHistory(id, 40);
-      if (this.screen !== 'detail' || this.activeId !== id) return;
+      if (!watching()) return;
       const lines: typeof this.lines = [];
       const feed: typeof this.feed = [];
+      this.lastReply = '';
       for (const e of events) {
+        this.collectReply(e);
         const line = this.toLine(e);
         if (line) lines.push(line);
         const fed = this.toFeed(e);
@@ -3966,7 +4021,8 @@ export class GlassesUI {
       if (s?.status === 'busy' || s?.status === 'waiting') this.status = s.status;
       else if (this.status === 'busy' || this.status === 'waiting') this.status = 'done';
       this.setSpinning(this.status === 'busy');
-      await this.render();
+      if (this.awaitingCommand && this.status === 'done') await this.commandDone();
+      else await this.render();
     } catch {
       // 다음 주기에 다시 읽는다.
     }

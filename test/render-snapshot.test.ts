@@ -88,6 +88,8 @@ const CHECKLIST = [
 async function boot() {
   const stub = stubGlasses();
   const ui = new GlassesUI(stub.glasses, { onLog: () => {} });
+  // 목록 그리기만 본다. 대기 중인 권한 요청을 띄우는 것은 permission.test.ts가 본다.
+  (ui as unknown as { syncPending: () => Promise<boolean> }).syncPending = async () => false;
 
   const orig = {
     listSessions: agentCli.listSessions,

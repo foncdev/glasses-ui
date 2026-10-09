@@ -55,6 +55,8 @@ async function homeWith(sessions: unknown[], sys?: unknown, openSessions = false
   });
   try {
     const ui = new GlassesUI(glasses, { onLog: () => {} });
+    // 목록 그리기만 본다. 대기 중인 권한 요청을 띄우는 것은 permission.test.ts가 본다.
+    (ui as unknown as { syncPending: () => Promise<boolean> }).syncPending = async () => false;
     await ui.start();
     await (ui as unknown as { refreshSummary(): Promise<void> }).refreshSummary();
     if (openSessions) {

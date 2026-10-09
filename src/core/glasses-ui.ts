@@ -252,6 +252,9 @@ const SERVER_POLL_MS = 60_000;
  */
 const SERVER_POLL_FAST_MS = 5_000;
 
+/** 대화 화면의 실시간 연결이 막혔을 때 기록·상태를 다시 읽는 주기. */
+const DETAIL_POLL_MS = 3_000;
+
 /**
  * 폰(Relay 앱)의 타이머·물 마시기를 읽는 간격.
  *
@@ -530,9 +533,18 @@ export class GlassesUI {
   private activityDetail = '';
   private activityAt = 0;
   private status = '';
-  private pending: { id: string; toolName: string; summary: string } | null = null;
+  /** 답을 기다리는 권한 요청. 한 번에 하나만 띄우고, 나머지는 이게 끝나면 syncPending이 띄운다. */
+  private pending: { id: string; sessionId: string; toolName: string; summary: string } | null = null;
   private permCursor = 0;
   private permShownAt = 0;
+  /** permShownAt을 센 요청. 같은 요청을 다시 그릴 때는 막는 시간을 새로 세지 않는다. */
+  private permShownId = '';
+  /** 답을 보내는 중. 그사이 탭이 한 번 더 와도 두 번 보내지 않는다. */
+  private deciding = false;
+  /** 마지막으로 답을 보내다 난 오류. 권한 화면에 띄워 다시 고르게 한다. */
+  private permError = '';
+  /** 소리로 알린 요청. 다시 맞출 때마다 같은 요청을 또 읽지 않게. */
+  private announcedPerms = new Set<string>();
   private doneIds = new Set<string>();
   private notice: {
     /** 한 줄 제목. 없으면 본문만 보여준다. */
@@ -1110,10 +1122,12 @@ export class GlassesUI {
     }
     this.watchLive();
     this.hooks.onSessionsChanged?.(this.sessions, this.cursor);
+    // askPermission이 띄우면 거기서 그린다.
+    const permChanged = await this.syncPending();
 
     // 목록이 그대로면 다시 그리지 않는다.
     // 주기적 갱신마다 리스트를 재생성하면 커서가 튀어 조작이 끊긴다.
-    if (before === after && this.screen === 'sessions' && !this.notice && !this.pending) return;
+    if (before === after && this.screen === 'sessions' && !this.notice && !this.pending && !permChanged) return;
     await this.render();
   }
 
@@ -1482,12 +1496,12 @@ export class GlassesUI {
   }
 
   /** 권한 요청에 그릴 것. 선택지 순서는 PERMISSION_CHOICES와 같다(거부가 맨 앞). */
-  private permissionView(p: { toolName: string; summary: string }): PermissionView {
-    const s = this.sessions.find((x) => x.id === this.activeId);
+  private permissionView(p: { sessionId: string; toolName: string; summary: string }): PermissionView {
+    const s = this.sessions.find((x) => x.id === p.sessionId);
     const m = msg();
     return {
       title: `$ ~/${s?.title || m.newChat}`,
-      status: [m.permRequest, clock()].join('   '),
+      status: this.permError ? clamp(m.permFailed(this.permError), 40) : [m.permRequest, clock()].join('   '),
       tool: p.toolName,
       summary: p.summary.replace(/\n/g, ' ').trim(),
       choices: PERMISSION_CHOICES.map((c) => ({
@@ -1701,7 +1715,12 @@ export class GlassesUI {
       // 1) 권한 요청이 최우선. 사용자가 답해야 작업이 진행된다.
       if (this.pending) {
         const p = this.pending;
-        this.permShownAt = Date.now();
+        // 막는 시간은 이 요청을 처음 그릴 때만 센다. 다시 그릴 때마다 세면 다른 세션 소식이나
+        // 주기 갱신으로 화면이 자주 바뀔 때 탭이 계속 버려진다(허용을 눌러도 반응이 없었다).
+        if (this.permShownId !== p.id) {
+          this.permShownId = p.id;
+          this.permShownAt = Date.now();
+        }
         if (this.glasses.showPermission) {
           await this.glasses.showPermission(this.permissionView(p));
           return;
@@ -2140,23 +2159,16 @@ export class GlassesUI {
     }
 
     if (e.type === 'permission_request') {
-      this.pending = {
+      await this.askPermission(String(e.sessionId ?? this.activeId), {
         id: String(e.requestId),
         toolName: String(e.toolName),
         summary: String(e.summary ?? ''),
-      };
-      this.permCursor = 0;
-      // 답해야 진행되는 일이므로 화면을 깨운다.
-      this.wake();
-      this.glasses.speak(msg().speakPermission(String(e.toolName)));
-      this.log(msg().logPermission(String(e.toolName)), 'warn');
-      await this.render();
+      });
       return;
     }
 
     if (e.type === 'permission_resolved') {
-      if (this.pending?.id === e.requestId) this.pending = null;
-      await this.render();
+      await this.permissionResolved(String(e.requestId));
       return;
     }
 
@@ -2237,19 +2249,71 @@ export class GlassesUI {
       return;
     }
 
+    // 보고 있는 세션(activeId)은 바꾸지 않는다. 바꾸면 대화 화면은 그대로 앞 세션의 이벤트를
+    // 받는데 이름만 바뀌어, 두 세션의 진행이 뒤섞이고 이 세션의 진행은 버려졌다.
     if (e.type === 'permission_request') {
-      this.activeId = id;
-      this.pending = {
+      await this.askPermission(id, {
         id: String(e.requestId),
         toolName: String(e.toolName),
         summary: String(e.summary ?? ''),
-      };
-      this.permCursor = 0;
-      this.wake();
-      this.glasses.speak(msg().speakPermission(String(e.toolName)));
-      this.log(`[${s?.title ?? msg().session}] ${msg().logPermission(String(e.toolName))}`, 'warn');
-      await this.render();
+      });
+      return;
     }
+
+    if (e.type === 'permission_resolved') await this.permissionResolved(String(e.requestId));
+  }
+
+  /**
+   * 권한 요청을 띄운다. 이미 다른 요청을 띄우고 있으면 그게 끝난 뒤 syncPending이 띄운다 —
+   * 덮어쓰면 앞 요청은 답할 길이 없어진다.
+   */
+  private async askPermission(sessionId: string, p: { id: string; toolName: string; summary: string }): Promise<void> {
+    if (this.pending) return;
+    this.pending = { ...p, sessionId };
+    this.permCursor = 0;
+    this.permError = '';
+    // 답해야 진행되는 일이므로 화면을 깨운다.
+    this.wake();
+    if (!this.announcedPerms.has(p.id)) {
+      this.announcedPerms.add(p.id);
+      this.glasses.speak(msg().speakPermission(p.toolName));
+      const title = this.sessions.find((x) => x.id === sessionId)?.title;
+      this.log(`${sessionId === this.activeId ? '' : `[${title ?? msg().session}] `}${msg().logPermission(p.toolName)}`, 'warn');
+    }
+    await this.render();
+  }
+
+  /** 다른 곳(웹)에서 답했거나 여기서 답한 요청이 끝났다. 다음 요청이 있으면 띄운다. */
+  private async permissionResolved(requestId: string): Promise<void> {
+    if (this.pending?.id !== requestId) return;
+    this.pending = null;
+    this.permError = '';
+    await this.render();
+    void this.refresh();
+  }
+
+  /**
+   * 서버가 들고 있는 대기 요청과 맞춘다. 세션 목록을 읽을 때마다 부른다.
+   * 웹에서 답한 요청은 내리고, 실시간 연결이 끊겨 놓친 요청은 다시 띄운다. 바뀌었으면 true.
+   */
+  private async syncPending(): Promise<boolean> {
+    const p = this.pending;
+    if (p) {
+      if (this.deciding) return false;
+      const s = this.sessions.find((x) => x.id === p.sessionId);
+      if (s?.live && (s.pending ?? []).some((q) => q.id === p.id)) return false;
+      this.pending = null;
+      this.permError = '';
+    }
+    // 보고 있는 세션의 요청을 먼저.
+    const live = this.sessions.filter((s) => s.live && (s.pending?.length ?? 0) > 0);
+    const next = live.find((s) => s.id === this.activeId) ?? live[0];
+    const q = next?.pending?.[0];
+    if (next && q) {
+      await this.askPermission(next.id, { id: q.id, toolName: q.toolName, summary: q.summary ?? '' });
+      return true;
+    }
+    return p !== null;
   }
 
   // --- 입력 ---
@@ -3578,7 +3642,6 @@ export class GlassesUI {
     this.detailStop?.();
     this.detailStop = undefined;
     this.setSpinning(false);
-    this.pending = null;
 
     // 세션이 없어졌으면 목록까지 올라간다.
     if (!this.activeId || !this.sessions.some((s) => s.id === this.activeId)) {
@@ -3619,23 +3682,44 @@ export class GlassesUI {
 
   // --- 동작 ---
 
+  /**
+   * 고른 답을 보낸다. 서버가 받은 뒤에만 화면에서 내린다 — 먼저 내리면 보내기가 실패했을 때
+   * 서버는 계속 기다리는데 안경에서는 요청이 사라져 다시 답할 길이 없었다.
+   */
   private async decidePermission(choice: (typeof PERMISSION_CHOICES)[number]): Promise<void> {
     const p = this.pending;
-    if (!p) return;
-    this.pending = null;
-    this.permCursor = 0;
-
+    if (!p || this.deciding) return;
+    this.deciding = true;
     try {
-      await agentCli.resolvePermission(this.activeId, p.id, choice.behavior);
+      await agentCli.resolvePermission(p.sessionId, p.id, choice.behavior);
       this.log(msg().logPermissionDecided(msg()[choice.label], p.toolName), choice.behavior === 'allow' ? 'ok' : 'warn');
+      if (this.pending?.id === p.id) this.pending = null;
+      this.permError = '';
+      this.permCursor = 0;
       if (choice.always) {
-        await agentCli.setPolicy(this.activeId, 'auto-approve');
-        this.log(msg().autoApproved, 'warn');
+        try {
+          await agentCli.setPolicy(p.sessionId, 'auto-approve');
+          this.log(msg().autoApproved, 'warn');
+        } catch (err) {
+          this.log(msg().permFailed((err as Error).message), 'error');
+        }
       }
     } catch (err) {
+      if (err instanceof AgentCliError && err.code === 'permission_not_found') {
+        // 웹에서 먼저 답했거나 세션이 다시 떴다. 이 요청은 끝났다.
+        if (this.pending?.id === p.id) this.pending = null;
+        this.permError = '';
+      } else {
+        // 요청은 그대로 두고 오류를 권한 화면에 띄운다. 다시 고르면 된다.
+        this.permError = (err as Error).message;
+      }
       this.log(msg().permFailed((err as Error).message), 'error');
+    } finally {
+      this.deciding = false;
     }
     await this.render();
+    // 같은 세션에 다음 요청이 기다리고 있을 수 있다.
+    void this.refresh();
   }
 
   async toggleVoice(): Promise<void> {
@@ -3665,7 +3749,6 @@ export class GlassesUI {
     this.screen = 'detail';
     this.lines = [];
     this.feed = [];
-    this.pending = null;
     this.status = '';
     this.doneIds.delete(id);
     this.notice = null;
@@ -3683,11 +3766,50 @@ export class GlassesUI {
     }
 
     if (s?.live) {
-      this.detailStop = agentCli.streamSession(id, (e) => void this.handleEvent(e), (m) =>
-        this.log(m, 'error'),
-      );
+      let poll: ReturnType<typeof setInterval> | undefined;
+      const stopStream = agentCli.streamSession(id, (e) => void this.handleEvent(e), (m) => {
+        this.log(m, 'error');
+        // 실시간 연결이 막힌 웹뷰다. 진행·권한을 주기적으로 읽어 메운다.
+        if (poll) return;
+        poll = setInterval(() => void this.pollDetail(id), DETAIL_POLL_MS);
+        (poll as { unref?: () => void }).unref?.();
+      });
+      this.detailStop = () => {
+        stopStream();
+        clearInterval(poll);
+      };
     }
     await this.render();
+  }
+
+  /**
+   * 실시간 연결 없이 대화 화면을 맞춘다. 기록을 다시 읽고, 세션 상태와 권한 요청은
+   * 세션 목록에서 가져온다(refresh → syncPending).
+   */
+  private async pollDetail(id: string): Promise<void> {
+    if (this.stopped || this.screen !== 'detail' || this.activeId !== id) return;
+    try {
+      const events = await agentCli.getHistory(id, 40);
+      if (this.screen !== 'detail' || this.activeId !== id) return;
+      const lines: typeof this.lines = [];
+      const feed: typeof this.feed = [];
+      for (const e of events) {
+        const line = this.toLine(e);
+        if (line) lines.push(line);
+        const fed = this.toFeed(e);
+        if (fed) feed.push(fed);
+      }
+      this.lines = lines;
+      this.feed = feed;
+      await this.refresh();
+      const s = this.sessions.find((x) => x.id === id);
+      if (s?.status === 'busy' || s?.status === 'waiting') this.status = s.status;
+      else if (this.status === 'busy' || this.status === 'waiting') this.status = 'done';
+      this.setSpinning(this.status === 'busy');
+      await this.render();
+    } catch {
+      // 다음 주기에 다시 읽는다.
+    }
   }
 
   async resume(id: string, deleteOriginal = false): Promise<void> {
@@ -3715,13 +3837,13 @@ export class GlassesUI {
    * 폰에서는 안경 화면이 어디까지 들어가 있는지 보이지 않기 때문이다.
    */
   async backToList(): Promise<void> {
-    this.pending = null;
     await this.goHome();
   }
 
   /** 폰 UI에서 프롬프트를 보낼 때. 안경도 그 세션 화면으로 따라간다. */
   async send(prompt: string): Promise<void> {
-    if (!this.activeId) return;
+    // 조용히 버리면 보낸 줄 안다. 폰 화면이 까닭을 띄우게 던진다.
+    if (!this.activeId) throw new Error(msg().sendNoSession);
     await agentCli.sendInput(this.activeId, prompt);
     this.status = 'busy';
     // 폰에서 보냈어도 진행 상황은 안경에서 본다.

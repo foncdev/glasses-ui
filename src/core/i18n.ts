@@ -365,6 +365,7 @@ const ko = {
   checkFailed: (m: string) => `체크 실패: ${m}`,
   loadTodosFailed: (m: string) => `할 일 불러오기 실패: ${m}`,
   permFailed: (m: string) => `권한 처리 실패: ${m}`,
+  sendNoSession: '보낼 세션이 없습니다. 안경에서 세션을 먼저 여세요.',
   historyLoadFailed: (m: string) => `이력 불러오기 실패: ${m}`,
 
   // --- 서버 접속 오류 (agent-cli) ---
@@ -726,6 +727,7 @@ const en: Messages = {
   checkFailed: (m) => `Check failed: ${m}`,
   loadTodosFailed: (m) => `Couldn't load to-dos: ${m}`,
   permFailed: (m) => `Permission failed: ${m}`,
+  sendNoSession: 'No session to send to. Open a session on the glasses first.',
   historyLoadFailed: (m) => `Couldn't load history: ${m}`,
 
   errEmptyAddress: 'The address is empty.',

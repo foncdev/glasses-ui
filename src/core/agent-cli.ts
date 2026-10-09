@@ -410,6 +410,11 @@ export class AgentCliClient {
     return this.request<PhoneStatus>('/phone/water', { method: 'POST', body: JSON.stringify({ action }) });
   }
 
+  /** 홈 메뉴 구성을 폰에 맞춘다. reset이면 폰에 저장한 것을 지운다. 답은 바뀐 폰 상태다. */
+  async phoneMenu(body: { order: string[]; hidden: string[] } | { reset: true }): Promise<PhoneStatus> {
+    return this.request<PhoneStatus>('/phone/menu', { method: 'POST', body: JSON.stringify(body) });
+  }
+
   async sysSummary(): Promise<SysSummary> {
     return this.request<SysSummary>('/sys/summary');
   }

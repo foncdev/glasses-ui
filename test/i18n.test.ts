@@ -171,7 +171,8 @@ test('영어로 두면 홈 메뉴·요약이 영어로 그려진다', async () =
       const v = sink.home.at(-1)!;
       assert.deepEqual(
         v.items.map((i) => i.label),
-        ['Agents', 'Notifications', 'To-Dos', 'System', 'Commands', 'Computer', 'Timer · Water', 'Settings'],
+        // 기본 순서. 명령은 기본으로 숨기고, 컴퓨터는 맥·PC가 연결됐을 때만 보인다.
+        ['Agents', 'Timer · Water', 'Notifications', 'To-Dos', 'System', 'Settings'],
       );
       const meta = Object.fromEntries(v.items.map((i) => [i.label, i.meta]));
       assert.equal(meta.Notifications, '7 new');

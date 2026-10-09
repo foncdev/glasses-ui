@@ -53,6 +53,15 @@ const ko = {
   menuCommands: '명령',
   menuPhone: '타이머 · 물',
   menuSettings: '설정',
+  menuEdit: '메뉴 편집',
+  menuReset: '기본값으로',
+  menuShow: '보이기',
+  menuHide: '숨기기',
+  menuUp: '위로',
+  menuDown: '아래로',
+  menuDone: '완료',
+  menuCannotHide: '설정은 숨길 수 없음',
+  menuWhenLinked: '연결 시',
 
   // --- 컴퓨터 (맥 mac-agent · PC win-agent) ---
   menuMac: '컴퓨터',
@@ -420,6 +429,15 @@ const en: Messages = {
   menuCommands: 'Commands',
   menuPhone: 'Timer · Water',
   menuSettings: 'Settings',
+  menuEdit: 'Edit Menu',
+  menuReset: 'Reset to default',
+  menuShow: 'Show',
+  menuHide: 'Hide',
+  menuUp: 'Move up',
+  menuDown: 'Move down',
+  menuDone: 'Done',
+  menuCannotHide: "Settings can't be hidden",
+  menuWhenLinked: 'when linked',
 
   // --- Computer (Mac mac-agent · PC win-agent) ---
   menuMac: 'Computer',

@@ -55,6 +55,17 @@ import {
 } from './phone.js';
 import { msg } from './i18n.js';
 import {
+  DEFAULT_MENU,
+  menuLabel,
+  moveMenu,
+  normalizeMenu,
+  sameMenu,
+  toggleMenu,
+  visibleMenu,
+  type MenuConfig,
+  type MenuId,
+} from './menu.js';
+import {
   MAC_ITEMS,
   captionsPage,
   errorText,
@@ -107,6 +118,8 @@ type Screen =
   | 'phone'
   | 'home-menu'
   | 'settings'
+  | 'menu-edit'
+  | 'menu-item'
   | 'mac'
   | 'mac-present'
   | 'mac-captions'
@@ -192,17 +205,6 @@ export function agoPhrase(iso: string | undefined, now = Date.now(), tight = fal
   return tight ? m.agoTight(short) : m.ago(short);
 }
 
-/** 메뉴 글은 그릴 때 고른다. 언어를 바꾸면 바로 따라가게. */
-const MENU = [
-  { label: 'menuAgents', screen: 'sessions' as const },
-  { label: 'menuNotifications', screen: 'notifications' as const },
-  { label: 'menuChecklist', screen: 'checklist' as const },
-  { label: 'menuSystem', screen: 'system' as const },
-  { label: 'menuCommands', screen: 'commands' as const },
-  { label: 'menuMac', screen: 'mac' as const },
-  { label: 'menuPhone', screen: 'phone' as const },
-  { label: 'menuSettings', screen: 'settings' as const },
-] as const;
 
 /**
  * 홈에서 더블탭하면 뜨는 선택지.
@@ -493,6 +495,8 @@ const PERMISSION_CHOICES = [
 const STORE_VOICE = 'voice.enabled';
 const STORE_IDLE = 'screen.idleMs';
 const STORE_LOGO = 'home.logo';
+/** 홈 메뉴 순서·숨김(JSON). 비어 있으면 기본값이다. */
+const STORE_MENU = 'home.menu';
 
 export interface GlassesUIHooks {
   /** 화면 밖으로 알릴 일. 폰 UI가 로그로 보여준다. */
@@ -571,6 +575,20 @@ export class GlassesUI {
   /** home과 settings의 커서. 화면마다 따로 둬야 오가도 위치가 남는다. */
   private menuCursor = 0;
   private setCursor = 0;
+  /** 홈 메뉴 순서·숨김. 안경 설정이나 폰 앱에서 바꾼다. */
+  private menuConfig: MenuConfig = DEFAULT_MENU;
+  /** 기본값이 아닌지(누가 바꿨는지). */
+  private menuCustom = false;
+  /** 폰이 지난번 상태에 메뉴를 실었는지. 실었다가 빠지면 폰 앱에서 기본값으로 돌린 것이다. */
+  private phoneHadMenu = false;
+  /** 안경에서 바꾼 메뉴를 폰에 올려 봤는지. 예전 폰 앱(경로 없음)에 거듭 보내지 않는다. */
+  private menuPushTried = false;
+  /** 서버(relay-service) 쪽에 붙은 맥·PC가 있는지. 폰 직접 연결과 별개로 본다. */
+  private extLinked = false;
+  /** 메뉴 편집 화면의 커서, 고른 항목. */
+  private menuEditCursor = 0;
+  private menuItemCursor = 0;
+  private menuEditing?: MenuId;
   /** 타이머·물 화면의 커서. */
   private phoneCursor = 0;
   /** 홈 더블탭 선택지의 커서. */
@@ -774,6 +792,17 @@ export class GlassesUI {
     // 로고 표시 여부. 값이 없으면 켜둔다.
     if ((await this.loadSetting(STORE_LOGO)) === '0') this.showLogo = false;
 
+    // 홈 메뉴 순서·숨김. 폰 앱에 저장한 것이 있으면 폰 상태를 읽을 때 그것으로 바뀐다.
+    const savedMenu = await this.loadSetting(STORE_MENU);
+    if (savedMenu) {
+      try {
+        this.menuConfig = normalizeMenu(JSON.parse(savedMenu));
+        this.menuCustom = true;
+      } catch {
+        // 깨진 값이면 기본값을 쓴다.
+      }
+    }
+
     // 켜진 채로 두지 않도록 처음부터 무조작 타이머를 돌린다.
     this.wake();
 
@@ -866,9 +895,15 @@ export class GlassesUI {
     try {
       const next = await agentCli.phoneStatus();
       events = phoneEvents(this.phone, next);
+      const computerBefore = this.computerLinked();
       this.phone = next;
       this.phoneAt = Date.now();
       for (const e of events) this.noticePhone(e, next);
+      const menuChanged = await this.syncMenuFromPhone(next);
+      if ((menuChanged || computerBefore !== this.computerLinked()) && this.screen === 'home') {
+        this.clampMenuCursor();
+        await this.render();
+      }
     } catch (err) {
       // 한두 번 못 읽는 것은 흔하다 — 폰 앱이 뒤에 있으면 가끔 늦는다. 그때마다
       // 지우면 진행바가 사라졌다 돌아오며 화면을 통째로 다시 세워 깜빡였다.
@@ -885,6 +920,74 @@ export class GlassesUI {
     }
     await this.drawPhone(events.length > 0);
     return true;
+  }
+
+  // --- 홈 메뉴 ---
+
+  /** 맥·PC가 연결돼 있는지. 폰 직접 연결이나 서버 쪽 연결 중 하나면 된다. */
+  private computerLinked(): boolean {
+    return this.phone?.computer === true || this.extLinked;
+  }
+
+  /** 지금 홈에 보일 항목. */
+  private homeMenu(): MenuId[] {
+    return visibleMenu(this.menuConfig, this.computerLinked());
+  }
+
+  private clampMenuCursor(): void {
+    this.menuCursor = Math.min(this.menuCursor, Math.max(this.homeMenu().length - 1, 0));
+  }
+
+  /**
+   * 폰 상태에 실린 메뉴를 따른다. 바뀌었으면 true.
+   * 폰이 메뉴를 실었다가 빼면 폰 앱에서 기본값으로 돌린 것이라 안경도 기본값으로 돌린다.
+   * 폰에 메뉴가 없는데 안경에서 바꾼 것이 있으면 폰에 한 번 올려 앱에도 보이게 한다.
+   */
+  private async syncMenuFromPhone(next: PhoneStatus): Promise<boolean> {
+    if (next.menu) {
+      this.phoneHadMenu = true;
+      const config = normalizeMenu(next.menu);
+      if (this.menuCustom && sameMenu(config, this.menuConfig)) return false;
+      this.menuConfig = config;
+      this.menuCustom = true;
+      await this.saveSetting(STORE_MENU, JSON.stringify(config));
+      return true;
+    }
+    if (this.phoneHadMenu) {
+      this.phoneHadMenu = false;
+      const changed = !sameMenu(this.menuConfig, DEFAULT_MENU);
+      this.menuConfig = DEFAULT_MENU;
+      this.menuCustom = false;
+      await this.saveSetting(STORE_MENU, '');
+      return changed;
+    }
+    if (this.menuCustom && !this.menuPushTried) {
+      this.menuPushTried = true;
+      await this.pushMenu(this.menuConfig);
+    }
+    return false;
+  }
+
+  /**
+   * 폰에 메뉴를 맞춘다. 폰이 받아 상태에 실어 줬을 때만 '폰에 있다'로 친다 —
+   * 예전 폰 앱처럼 경로를 모르면 다음 상태에 메뉴가 없어도 기본값으로 돌린 것으로 보지 않는다.
+   */
+  private async pushMenu(body: MenuConfig | { reset: true }): Promise<void> {
+    try {
+      const reply = await agentCli.phoneMenu(body);
+      this.phoneHadMenu = Boolean(reply?.menu);
+    } catch {
+      this.phoneHadMenu = false;
+    }
+  }
+
+  /** 안경에서 메뉴를 바꿨다. 저장하고 폰에도 맞춘다(폰이 없으면 안경에만 남는다). */
+  private async saveMenu(config: MenuConfig | null): Promise<void> {
+    this.menuConfig = config ?? DEFAULT_MENU;
+    this.menuCustom = config !== null;
+    await this.saveSetting(STORE_MENU, config ? JSON.stringify(config) : '');
+    if (this.phone) await this.pushMenu(config ?? { reset: true });
+    else this.phoneHadMenu = false;
   }
 
   /** 가진 폰 상태로 진행바·홈 상태를 맞춘다. 글자가 바뀌었을 때만 그린다. */
@@ -1135,7 +1238,7 @@ export class GlassesUI {
     return {
       title: '$ relay ~/home',
       status,
-      items: MENU.map((m) => ({ label: msg()[m.label], meta: meta[m.screen] ?? '' })),
+      items: this.homeMenu().map((id) => ({ label: menuLabel(id), meta: meta[id] ?? '' })),
       logo: this.showLogo ? this.glasses.logo : undefined,
       gauges,
     };
@@ -1640,7 +1743,7 @@ export class GlassesUI {
         // 로고를 끄면 패널 없이 목록이 화면을 다 쓴다.
         await this.glasses.showList(
           this.summary(),
-          MENU.map((m) => msg()[m.label]),
+          this.homeMenu().map((id) => menuLabel(id)),
           // 로고 아트는 기기마다 달라 어댑터가 갖는다.
           this.showLogo ? this.glasses.logo : undefined,
         );
@@ -1872,6 +1975,32 @@ export class GlassesUI {
           ...IDLE_CHOICES.map(
             (ms) => m.idleChoice(this.idleMs === ms ? '*' : '-', ms / 1000),
           ),
+          m.menuEdit,
+        ]);
+        return;
+      }
+      // 메뉴 편집: 모든 항목을 순서대로, 보이는 것은 [x]. 마지막 줄은 기본값으로.
+      if (this.screen === 'menu-edit') {
+        const m = msg();
+        const rows = this.menuConfig.order.map((id) => {
+          const shown = !this.menuConfig.hidden.includes(id);
+          const note = id === 'mac' ? ` · ${m.menuWhenLinked}` : '';
+          return `${shown ? '[x]' : '[ ]'} ${menuLabel(id)}${note}`;
+        });
+        await this.glasses.showList(m.withBack(m.menuEdit), [...rows, m.menuReset]);
+        return;
+      }
+      // 항목 하나: 보이기·숨기기, 위로, 아래로, 완료.
+      if (this.screen === 'menu-item' && this.menuEditing) {
+        const m = msg();
+        const id = this.menuEditing;
+        const shown = !this.menuConfig.hidden.includes(id);
+        const pos = this.menuConfig.order.indexOf(id) + 1;
+        await this.glasses.showList(m.withBack(`${menuLabel(id)} ${pos}/${this.menuConfig.order.length}`), [
+          id === 'settings' ? m.menuCannotHide : shown ? m.menuHide : m.menuShow,
+          m.menuUp,
+          m.menuDown,
+          m.menuDone,
         ]);
         return;
       }
@@ -2139,6 +2268,8 @@ export class GlassesUI {
       | 'cursor'
       | 'menuCursor'
       | 'setCursor'
+      | 'menuEditCursor'
+      | 'menuItemCursor'
       | 'notifCursor'
       | 'histCursor'
       | 'checkCursor'
@@ -2382,6 +2513,13 @@ export class GlassesUI {
     } catch {
       // 체크리스트도 마찬가지다.
     }
+    // 홈의 '컴퓨터'를 보일지. 서버 쪽에 붙은 맥·PC가 있는지 본다(폰 직접 연결은 폰 상태가 알려 준다).
+    try {
+      this.extLinked = (await agentCli.listExt()).length > 0;
+    } catch {
+      this.extLinked = false;
+    }
+    this.clampMenuCursor();
     try {
       await this.refresh();
     } catch {
@@ -2938,7 +3076,8 @@ export class GlassesUI {
 
     // 홈: 메뉴 네 개.
     if (this.screen === 'home') {
-      if (this.moveCursor(gesture, selectedIndex, 'menuCursor', MENU.length)) {
+      const items = this.homeMenu();
+      if (this.moveCursor(gesture, selectedIndex, 'menuCursor', items.length)) {
         await this.render();
         return;
       }
@@ -2954,7 +3093,7 @@ export class GlassesUI {
         await this.render();
         return;
       }
-      if (gesture === 'tap') await this.openMenu(MENU[this.menuCursor]?.screen);
+      if (gesture === 'tap') await this.openMenu(items[this.menuCursor]);
       return;
     }
 
@@ -3296,11 +3435,17 @@ export class GlassesUI {
     // 설정: 음성 토글 + 로고 토글 + 화면 꺼짐 시간 세 칸.
     if (this.screen === 'settings') {
       if (gesture === 'doubleTap') return this.goHome();
-      if (this.moveCursor(gesture, selectedIndex, 'setCursor', 2 + IDLE_CHOICES.length)) {
+      if (this.moveCursor(gesture, selectedIndex, 'setCursor', 3 + IDLE_CHOICES.length)) {
         await this.render();
         return;
       }
       if (gesture === 'tap') {
+        if (this.setCursor === 2 + IDLE_CHOICES.length) {
+          this.screen = 'menu-edit';
+          this.menuEditCursor = 0;
+          await this.render();
+          return;
+        }
         if (this.setCursor === 0) {
           await this.toggleVoice();
         } else if (this.setCursor === 1) {
@@ -3317,6 +3462,54 @@ export class GlassesUI {
         }
         await this.render();
       }
+      return;
+    }
+
+    // 메뉴 편집: 항목을 고르면 그 항목의 조작으로, 마지막 줄은 기본값으로.
+    if (this.screen === 'menu-edit') {
+      if (gesture === 'doubleTap') {
+        this.screen = 'settings';
+        return this.render();
+      }
+      const count = this.menuConfig.order.length + 1;
+      if (this.moveCursor(gesture, selectedIndex, 'menuEditCursor', count)) {
+        await this.render();
+        return;
+      }
+      if (gesture === 'tap') {
+        const id = this.menuConfig.order[this.menuEditCursor];
+        if (!id) {
+          await this.saveMenu(null);
+          this.log(msg().menuReset, 'ok');
+          return this.render();
+        }
+        this.menuEditing = id;
+        this.menuItemCursor = 0;
+        this.screen = 'menu-item';
+        await this.render();
+      }
+      return;
+    }
+
+    // 항목 하나: 위로·아래로는 그 자리에 남아 거듭 누를 수 있다.
+    if (this.screen === 'menu-item') {
+      const id = this.menuEditing;
+      const back = async (): Promise<void> => {
+        this.screen = 'menu-edit';
+        this.menuEditCursor = id ? this.menuConfig.order.indexOf(id) : 0;
+        await this.render();
+      };
+      if (!id || gesture === 'doubleTap') return back();
+      if (this.moveCursor(gesture, selectedIndex, 'menuItemCursor', 4)) {
+        await this.render();
+        return;
+      }
+      if (gesture !== 'tap') return;
+      if (this.menuItemCursor === 3) return back();
+      const next =
+        this.menuItemCursor === 0 ? toggleMenu(this.menuConfig, id) : moveMenu(this.menuConfig, id, this.menuItemCursor === 1 ? -1 : 1);
+      if (!sameMenu(next, this.menuConfig)) await this.saveMenu(next);
+      await this.render();
       return;
     }
 

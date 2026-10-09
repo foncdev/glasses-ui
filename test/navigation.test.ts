@@ -141,7 +141,8 @@ test('홈은 요약과 메뉴를 보여준다', async () => {
   const { shown, restore } = await atHome();
   try {
     const last = shown.at(-1)!;
-    assert.deepEqual(last.items, ['에이전트', '알림 보기', '체크 보기', '시스템', '명령', '컴퓨터', '타이머 · 물', '설정']);
+    // 기본 순서. 명령은 기본으로 숨기고, 컴퓨터는 맥·PC가 연결됐을 때만 보인다.
+    assert.deepEqual(last.items, ['에이전트', '타이머 · 물', '알림 보기', '체크 보기', '시스템', '설정']);
     // 상단 한 줄에 세션·알림·체크가 모두 있어야 한다.
     assert.match(last.header, /세션 .*알림 .*체크/);
   } finally {
@@ -236,7 +237,7 @@ test('홈에서 더블탭하면 화면 꺼짐·종료하기·취소를 고르고
 test('알림 보기 > 목록 > 내용', async () => {
   const { r, shown, texts, fire, restore } = await atHome();
   try {
-    fire('tap', 1); // 알림 보기
+    fire('tap', menuIndex(shown, '알림 보기'));
     await settle();
     assert.equal(r.screen, 'notifications');
     const items = shown.at(-1)!.items;
@@ -261,7 +262,7 @@ test('알림 보기 > 목록 > 내용', async () => {
 test('체크 보기는 전역 목록을 연다', async () => {
   const { r, shown, fire, restore } = await atHome();
   try {
-    fire('tap', 2);
+    fire('tap', menuIndex(shown, '체크 보기'));
     await settle();
     assert.equal(r.screen, 'checklist');
     assert.match(shown.at(-1)!.header, /전역 할 일/);
@@ -285,9 +286,10 @@ test('설정에서 음성·로고·화면 꺼짐 시간을 바꾼다', async () 
     assert.match(items[0]!, /음성: 켜짐/);
     assert.match(items[1]!, /DEV 로고: 켜짐/);
     assert.deepEqual(
-      items.slice(2).map((x) => x.replace(/^[*-] /, '')),
+      items.slice(2, 5).map((x) => x.replace(/^[*-] /, '')),
       ['화면 꺼짐: 10초', '화면 꺼짐: 15초', '화면 꺼짐: 30초'],
     );
+    assert.equal(items[5], '메뉴 편집', '메뉴 편집은 맨 아래');
     // 기본값 15초에 표시가 붙어 있어야 한다.
     // 펌웨어가 앞 공백을 지우므로 안 고른 값도 보이는 문자로 시작해야 한다.
     assert.match(items[3]!, /^\* /, '고른 값');
@@ -355,9 +357,9 @@ test('커서는 목록 끝을 넘지 않는다', async () => {
 });
 
 test('agent-cli가 죽어 있어도 홈으로 돌아온다', async () => {
-  const { r, fire, restore } = await atHome();
+  const { r, shown, fire, restore } = await atHome();
   try {
-    fire('tap', 2); // 체크 보기 (서버가 직접 준다)
+    fire('tap', menuIndex(shown, '체크 보기')); // 서버가 직접 준다
     await settle();
     assert.equal(r.screen, 'checklist');
 
@@ -458,7 +460,7 @@ test('메뉴를 오갔다 와도 로고가 남아 있다', async () => {
   const { r, relay, shown, fire, restore } = await atHome();
   try {
     await relay.showMotd();
-    fire('tap', 2); // 체크 보기로 내려간다
+    fire('tap', menuIndex(shown, '체크 보기')); // 체크 보기로 내려간다
     await settle();
     assert.equal(r.screen, 'checklist');
 

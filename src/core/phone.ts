@@ -31,6 +31,10 @@ export interface PhoneWater {
 export interface PhoneStatus {
   timer: PhoneTimer;
   water: PhoneWater;
+  /** 폰 앱에서 정한 홈 메뉴(설정 > 안경 메뉴). 바꾼 적이 없으면 없다. */
+  menu?: { order: string[]; hidden: string[] };
+  /** 폰이 맥·PC에 바로 연결돼 있는지. 홈의 '컴퓨터'를 보일지 정한다. */
+  computer?: boolean;
 }
 
 /** 지금 남은 시간(초). 받은 때(fetchedAt)부터 흐른 만큼 줄인다. */

@@ -154,6 +154,7 @@ test('메뉴: 못 쓰는 기능엔 사유가 붙고, 글은 목록 칸(63바이�
   ];
   assert.deepEqual(MAC_ITEMS.map((i) => macItemLabel(i, caps)), [
     '발표 리모컨', '회의 자막 · 화면 기록 권한 필요', '다음 회의 · 라이선스 필요', '단축어 · 쓸 수 없음', '텔레프롬프터 · 쓸 수 없음',
+    '발표 자료 · 쓸 수 없음',
   ]);
   for (const locale of ['ko', 'en'] as const) {
     setLocale(locale);
@@ -264,7 +265,7 @@ test('맥 메뉴 → 발표: 탭은 고른 단추(처음엔 다음), 위로 이�
   });
   try {
     await h.r.openMenu('mac');
-    assert.deepEqual(h.lists.at(-1)!.items, ['발표 리모컨', '회의 자막', '다음 회의', '단축어', '텔레프롬프터']);
+    assert.deepEqual(h.lists.at(-1)!.items, ['발표 리모컨', '회의 자막', '다음 회의', '단축어', '텔레프롬프터', '발표 자료 · 쓸 수 없음']);
 
     await h.fire('tap', 0);
     assert.equal(h.r.screen, 'mac-present');
@@ -338,6 +339,82 @@ test('발표 끄기: 끄기를 고르고 두 번 탭해야 끈다. 확인 중 �
     assert.equal(h.calls.at(-1)!.path, '/present/stop');
     assert.match(h.texts.at(-1)!, /대기/);
     assert.ok(h.texts.at(-1)!.endsWith(msg().presentStartHint));
+  } finally {
+    h.restore();
+  }
+});
+
+const filesCaps = [
+  { id: 'present', ready: true }, { id: 'captions', ready: true }, { id: 'calendar', ready: true }, { id: 'shortcuts', ready: true },
+  { id: 'prompter', ready: true }, { id: 'present-files', ready: true },
+];
+
+test('발표 리모컨: 열린 문서가 없으면 발표 자료 목록으로 가고, 고르면 맥에서 열어 리모컨(대기)으로 간다', async () => {
+  let opened = false;
+  const h = await harness({
+    '/present/state': () => (opened ? { status: 'ready', slide: 1, total: 8, document: '분기 실적.key' } : { status: 'none' }),
+    '/present/files': { folder: '~/Documents/발표', files: [{ name: '분기 실적.key', app: 'keynote' }, { name: '제품 소개.pptx', app: 'powerpoint' }] },
+    '/present/open': () => {
+      opened = true;
+      return { status: 'ready', slide: 1, total: 8, document: '분기 실적.key' };
+    },
+  }, filesCaps);
+  try {
+    await h.r.openMenu('mac');
+    await h.fire('tap', 0);
+    assert.equal(h.r.screen, 'mac-present-files');
+    assert.deepEqual(h.lists.at(-1)!.items, ['분기 실적.key', '제품 소개.pptx']);
+    assert.equal(h.streams.length, 0, '목록에서는 발표 스트림을 열지 않는다');
+
+    await h.fire('tap', 0);
+    assert.deepEqual(h.calls.find((c) => c.path === '/present/open')!.body, { name: '분기 실적.key' });
+    assert.ok(h.texts.includes('여는 중: 분기 실적.key'));
+    assert.equal(h.r.screen, 'mac-present');
+    assert.match(h.texts.at(-1)!, /대기 · 1 \/ 8쪽/);
+    assert.equal(h.streams.at(-1)!.path, '/present/stream');
+
+    // 리모컨에서 두 번 탭하면 맥 메뉴로 나간다(목록으로 되돌아가지 않는다).
+    await h.fire('doubleTap');
+    assert.equal(h.r.screen, 'mac');
+  } finally {
+    h.restore();
+  }
+});
+
+test('발표 자료: 메뉴에서 바로 연다. 비었으면 넣을 폴더를 알려 주고, 열기 실패는 머리에 사유를 싣는다', async () => {
+  const empty = await harness({ '/present/files': { folder: '~/Documents/발표', files: [] } }, filesCaps);
+  try {
+    await empty.r.openMenu('mac');
+    await empty.fire('tap', 5);
+    assert.equal(empty.r.screen, 'mac-present-files');
+    assert.deepEqual(empty.lists.at(-1)!.items, ['~/Documents/발표에 Keynote·PowerPoint 파일을 넣으세요']);
+  } finally {
+    empty.restore();
+  }
+
+  const failing = await harness({
+    '/present/files': { folder: '~', files: [{ name: 'a.key' }] },
+    '/present/open': new Error('발표 앱으로 열지 못했습니다.'),
+  }, filesCaps);
+  try {
+    await failing.r.openMenu('mac');
+    await failing.fire('tap', 5);
+    await failing.fire('tap', 0);
+    assert.equal(failing.r.screen, 'mac-present-files', '실패하면 목록에 남는다');
+    assert.match(failing.lists.at(-1)!.header, /열지 못했습니다/);
+    assert.deepEqual(failing.lists.at(-1)!.items, ['a.key']);
+  } finally {
+    failing.restore();
+  }
+});
+
+test('발표 자료 기능이 없는 맥(옛 판·PC)이면 리모컨은 지금처럼 문서 없음 화면이다', async () => {
+  const h = await harness({ '/present/state': { status: 'none' } });
+  try {
+    await h.r.openMenu('mac');
+    await h.fire('tap', 0);
+    assert.equal(h.r.screen, 'mac-present');
+    assert.ok(!h.calls.some((c) => c.path === '/present/files'));
   } finally {
     h.restore();
   }

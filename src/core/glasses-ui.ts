@@ -73,6 +73,7 @@ import {
   type MacEvent,
   type MacItem,
   type MacShortcut,
+  type PresentFile,
   type PresentState,
   type PrompterState,
 } from './mac.js';
@@ -107,6 +108,7 @@ type Screen =
   | 'mac-captions'
   | 'mac-meeting'
   | 'mac-shortcuts'
+  | 'mac-present-files'
   | 'mac-prompter'
   | 'mac-reply'
   | 'mac-result';
@@ -642,6 +644,10 @@ export class GlassesUI {
   /** undefined: 읽는 중. */
   private macShortcuts?: MacShortcut[];
   private macShortcutCursor = 0;
+  /** 맥 발표 폴더의 자료. 읽기 전이면 undefined. */
+  private macPresentFiles?: PresentFile[];
+  private macPresentFolder = '';
+  private macPresentFileCursor = 0;
   private macPrompter?: PrompterState;
   private macResult?: { name: string; state: string; output?: string };
   /** 결과 화면에서 돌아갈 곳. */
@@ -1814,6 +1820,20 @@ export class GlassesUI {
         await this.glasses.showList(m.withBack(m.macShortcuts), rows);
         return;
       }
+      if (this.screen === 'mac-present-files') {
+        const m = msg();
+        const files = this.macPresentFiles;
+        const rows =
+          files === undefined
+            ? [m.reading]
+            : files.length > 0
+              ? files.map((f) => f.name)
+              : [this.macError ?? m.presentFilesEmpty(this.macPresentFolder || '~/Documents/발표')];
+        // 열다 실패하면 머리에 사유를 싣는다. 줄을 끼워 넣으면 커서 자리가 어긋난다.
+        const head = files && files.length > 0 && this.macError ? this.macError : m.macPresentFiles;
+        await this.glasses.showList(m.withBack(head), rows);
+        return;
+      }
       if (this.screen === 'mac-reply') {
         const m = msg();
         await this.glasses.showList(m.withBack(m.replyTo(this.macReplyTo ?? '')), [...quickReplies(), m.replyCancel]);
@@ -2111,6 +2131,7 @@ export class GlassesUI {
       | 'homeMenuCursor'
       | 'macCursor'
       | 'macShortcutCursor'
+      | 'macPresentFileCursor'
       | 'macReplyCursor',
     count: number,
   ): boolean {
@@ -2496,10 +2517,15 @@ export class GlassesUI {
     if (item.screen === 'mac-captions') return this.openCaptions();
     if (item.screen === 'mac-meeting') return this.openMeeting();
     if (item.screen === 'mac-prompter') return this.openPrompter();
+    if (item.screen === 'mac-present-files') return this.openPresentFiles();
     return this.openMacShortcuts();
   }
 
-  private async openPresent(): Promise<void> {
+  /**
+   * 발표 리모컨. 열린 문서가 없고 맥에 발표 자료 폴더가 있으면 자료 목록으로 넘어간다.
+   * 자료를 골라 연 뒤에 부를 때는 목록으로 돌려보내지 않는다(autoFiles=false).
+   */
+  private async openPresent(autoFiles = true): Promise<void> {
     this.screen = 'mac-present';
     this.macPresent = undefined;
     this.presentCursor = 1;
@@ -2516,6 +2542,12 @@ export class GlassesUI {
       if (this.screen === 'mac-present') await this.render();
     };
     await load();
+    // load()가 채운 값이다. 위에서 undefined로 비운 것으로 좁혀지지 않게 다시 읽는다.
+    const status = (this.macPresent as PresentState | undefined)?.status;
+    const noDocument = status === 'none' || status === 'no_document';
+    if (autoFiles && noDocument && this.macCaps?.some((c) => c.id === 'present-files' && c.ready)) {
+      return this.openPresentFiles();
+    }
     this.macStop = agentCli.streamMac(
       '/present/stream',
       ['state', 'error'],
@@ -2682,6 +2714,40 @@ export class GlassesUI {
       this.macError = errorText(err);
     }
     await this.render();
+  }
+
+  private async openPresentFiles(): Promise<void> {
+    this.stopMacStream();
+    this.screen = 'mac-present-files';
+    this.armIdle();
+    this.macPresentFileCursor = 0;
+    this.macPresentFiles = undefined;
+    this.macError = undefined;
+    await this.render();
+    try {
+      const r = await agentCli.mac<{ folder?: string; files: PresentFile[] }>('/present/files');
+      this.macPresentFiles = r.files.slice(0, LIST_MAX);
+      this.macPresentFolder = r.folder ?? '';
+    } catch (err) {
+      this.macPresentFiles = [];
+      this.macError = errorText(err);
+    }
+    if (this.screen === 'mac-present-files') await this.render();
+  }
+
+  /** 고른 자료를 맥에서 열고 발표 리모컨으로 간다. 발표 시작은 리모컨에서 탭으로 한다. */
+  private async openPresentFile(file: PresentFile): Promise<void> {
+    await this.glasses.showText(msg().presentOpening(file.name));
+    try {
+      // 앱을 띄우고 문서를 여는 데 몇 초 걸린다. 맥은 문서가 잡힐 때까지(최대 15초) 기다렸다 답한다.
+      await agentCli.mac<PresentState>('/present/open', { name: file.name }, 30_000);
+    } catch (err) {
+      this.macError = errorText(err);
+      await this.render();
+      return;
+    }
+    this.macError = undefined;
+    await this.openPresent(false);
   }
 
   private async openMacShortcuts(): Promise<void> {
@@ -3098,6 +3164,21 @@ export class GlassesUI {
       if (gesture === 'tap') {
         const s = list[this.macShortcutCursor];
         if (s) await this.runMacShortcut(s);
+      }
+      return;
+    }
+
+    // 발표 자료: 탭하면 맥에서 열고 발표 리모컨으로 간다.
+    if (this.screen === 'mac-present-files') {
+      if (gesture === 'doubleTap') return this.backToMac();
+      const files = this.macPresentFiles ?? [];
+      if (this.moveCursor(gesture, selectedIndex, 'macPresentFileCursor', files.length)) {
+        await this.render();
+        return;
+      }
+      if (gesture === 'tap') {
+        const file = files[this.macPresentFileCursor];
+        if (file) await this.openPresentFile(file);
       }
       return;
     }

@@ -37,6 +37,13 @@ export interface PresentState {
   startedAt?: string;
 }
 
+/** 맥 발표 폴더의 자료 하나(GET /present/files). */
+export interface PresentFile {
+  name: string;
+  app?: string;
+  modifiedAt?: number;
+}
+
 export interface CaptionLine {
   id: number;
   text: string;
@@ -98,6 +105,7 @@ export const MAC_ITEMS = [
   { label: 'macMeeting', capability: 'calendar', screen: 'mac-meeting' },
   { label: 'macShortcuts', capability: 'shortcuts', screen: 'mac-shortcuts' },
   { label: 'macPrompter', capability: 'prompter', screen: 'mac-prompter' },
+  { label: 'macPresentFiles', capability: 'present-files', screen: 'mac-present-files' },
 ] as const;
 
 export type MacItem = (typeof MAC_ITEMS)[number];
